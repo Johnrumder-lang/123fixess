@@ -24,3 +24,8 @@ java {
     sourceCompatibility = JavaVersion.VERSION_25
     targetCompatibility = JavaVersion.VERSION_25
 }
+ // Standalone main-method test suite is run explicitly in GitHub Actions.
+ // Gradle's default JUnit discovery does not discover main-method tests.
+tasks.named("test") {
+    failOnNoDiscoveredTests = false
+}
