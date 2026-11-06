@@ -1,41 +1,41 @@
-# LockOn v2.1.0 — Minecraft 26.3 / Fabric
+# LockOn v2.2.0 — Minecraft 26.3 / Fabric
 
-A client-only assisted combat practice mod for a private server where the owner and other players consent. Requires Java 25, Minecraft 26.3, Fabric Loader 0.20.1, Fabric API 0.165.2+26.3 and Cloth Config API 26.3.159.
+Client-side assisted PvP practice and optional HUD tracers for private worlds/servers where the owner and players consent. Requires Java 25, Fabric Loader 0.20.1, Fabric API 0.165.2+26.3, and Cloth Config API 26.3.159.
 
-## New: automatic fist / empty-hand combat
+## NEW — Infinite tracer distance
 
-**LockOn now attacks with fists when your main hand is completely empty**, using the same locked target, aim assist, chase/strafe, sprint-knockback resets, combo mode and timed critical-hit attempts as a sword.
+Press **O → Tracers**. The **Tracer distance: 8-32 or inf** text setting now accepts the literal **`inf`** (also `infinity` or `∞`). Click Save. It persists in the Modrinth instance's `config/lockon.properties` as `traceDistance=inf`.
 
-- Empty-hand combat automatically activates when you switch from your sword to an **empty hotbar slot**. No new key is required.
-- Sword timing is not forced onto fists: they have a much faster vanilla cooldown. The combo minimum is **3 ticks for bare hands** rather than 8 ticks for swords, while the real attack-strength cooldown check and randomized 20–50 ms additional delay still apply. The bot does not force damage faster than the game permits.
-- Switching from a sword to fists (or back) clears the previous weapon's queued attack and combo timing.
-- The mod **does not automatically attack while holding another item**, including bows, pickaxes, food or tools. Bow targeting remains manually fired as before.
-- Unarmed attacks naturally do far less damage than a sword. Sprint knockback and crit conditions still depend on normal Minecraft mechanics.
-- This feature is covered by new deterministic test cases in GitHub Actions.
+- **Numbers 8–32:** Keep the old finite distance limit in blocks (for example `24`).
+- **`inf`:** Remove the mod's distance filtering for **all players and matching entities already loaded by your client**. For chests, beds and custom blocks, incrementally search every currently loaded chunk within the **client's render-distance footprint**, checking its entire vertical build height.
+- **Important: not literally infinite world visibility.** The server only sends nearby chunks and loaded entities. The mod cannot discover distant players/blocks in chunks the server has never sent, and it does not forcibly load chunks or bypass server rendering/tracking limits.
+- Tracers remain split into individually toggleable categories: red players, gold chests, blue beds, purple custom blocks, green custom entities.
+- Performance safeguards: blocks are scanned by loaded chunks, nearest chunks first, and empty/irrelevant chunk sections are skipped using palette checks. Scan work is budgeted per tick; markers gradually appear as chunks are inspected. **Up to 600 block markers and 300 matching custom-entity markers** can be drawn per cycle to prevent severe frame stutters.
+- Infinite mode may take longer to find distant beds, chests or custom blocks; you can lower render distance or choose a finite range for best FPS. The overlay only projects targets in front of your camera; turn around to see targets behind you.
 
-## Existing v2.0.0 features retained
+## Other features retained
 
-- **3.0 blocks default attempted melee reach**, matching unmodified vanilla Survival swords. Press **O → Combat** to select 2.5–3.0. The server still decides valid hit reach.
-- **Tracers:** press **O → Tracers** to independently toggle lines toward loaded players, chests, beds, custom blocks and custom entity IDs. Radius 8–32 blocks, all tracer features off by default.
-- **Combos:** 86% charged follow-up attacks when comboing, full-charge preference otherwise, 20–50 ms randomized additional delay, tactical target tracking and chase.
-- **Pathfinding:** jumps over one-block obstacles, path replanning, optional destructive block breaking OFF by default.
-- **Bow:** target prediction and drop compensation; you draw and release manually.
+- LockOn aims at players and supports swords or bare fists, with combo-aware cooldown, critical jumps, sprint knockback, and chase/pathfinding. Bow lock-on assists aiming; you still fire manually.
+- Normal unmodified vanilla Survival melee reach: up to **3.0 blocks** (O → Combat, adjustable 2.5–3.0). The server validates reach.
+- A* navigation and obstacle breaking (OFF by default).
+- U practice statistics.
 
 ## Controls
-
-| Key | Action |
+| Key | Function |
 |---|---|
-| R | Toggle LockOn |
-| G | Select or clear player target |
+| R | LockOn on/off |
+| G | Select/clear combat target |
 | H | Smart chasing |
-| J | Critical-hit jump attempts |
+| J | Jump-crit attempts |
 | K | Combo / Precision mode |
-| B | Optional obstacle breaking (OFF by default) |
-| O | Reach and tracer settings |
-| U | Practice diagnostics |
+| B | Automatic obstacle breaking (OFF by default) |
+| **O** | **Settings: tracer distance `inf`, categories, and combat reach** |
+| U | Practice statistics |
 
-## Installation
+## Install
 
-Delete all previous LockOn JARs from your Modrinth instance's `mods/` folder. Install `LockOn-26.3-v2.1.0.jar` from the `lockon-fixed` branch **only after the [GitHub Actions build and tactics tests](https://github.com/Johnrumder-lang/123fixess/actions/workflows/build.yml) succeed**. Keep Fabric API and Cloth Config installed. Then select an opponent with **G**, enable with **R**, and switch to an empty hotbar slot to use fists.
+After the [GitHub Actions build and tests](https://github.com/Johnrumder-lang/123fixess/actions/workflows/build.yml) complete successfully, remove all older LockOn JARs from your Modrinth Fabric 26.3 `mods/` folder and install **`LockOn-26.3-v2.2.0.jar`**. Keep Fabric API and Cloth Config installed.
 
-**Limitations:** Code compilation and unit tests do not verify in-game behavior. Test in an enclosed private practice arena; server reach limits, invulnerability frames, latency and weapon cooldown still apply.
+Run the game, press **O → Tracers**, set distance to **`inf`**, choose the categories to trace, then Save. Infinite tracing does **not** require combat LockOn to be active.
+
+Java compilation and deterministic tactics tests do not establish in-game visual correctness; verify overlays and performance in an actual world first.

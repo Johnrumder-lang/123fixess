@@ -27,6 +27,7 @@ public final class LockOnSettings {
     private static boolean traceCustomBlocks;
     private static boolean traceCustomEntities;
     private static int traceDistance = 24;
+    private static boolean unlimitedTraceDistance;
     private static String blockIds = "minecraft:diamond_ore";
     private static String entityIds = "minecraft:zombie";
     private static Set<String> customBlockIds = Set.of("minecraft:diamond_ore");
@@ -41,13 +42,33 @@ public final class LockOnSettings {
     public static boolean traceCustomBlocks() { return traceCustomBlocks; }
     public static boolean traceCustomEntities() { return traceCustomEntities; }
     public static int traceDistance() { return traceDistance; }
+    public static boolean unlimitedTraceDistance() { return unlimitedTraceDistance; }
+    public static String traceDistanceText() {
+        return unlimitedTraceDistance ? "inf" : Integer.toString(traceDistance);
+    }
+
+    public static void setTraceDistanceText(String text) {
+        if (text == null) return;
+        String value = text.trim();
+        if (value.equalsIgnoreCase("inf") || value.equalsIgnoreCase("infinity") || value.equals("∞")) {
+            unlimitedTraceDistance = true;
+            return;
+        }
+        try {
+            int parsed = Integer.parseInt(value);
+            traceDistance = Math.max(8, Math.min(32, parsed));
+            unlimitedTraceDistance = false;
+        } catch (NumberFormatException ignored) {
+            // Retain the previous valid value if the field is invalid.
+        }
+    }
     public static Set<String> customBlockIds() { return customBlockIds; }
     public static Set<String> customEntityIds() { return customEntityIds; }
 
     /** Ensures any block-filter change restarts the scan immediately. */
     public static String scanSignature() {
         return traceChests + ":" + traceBeds + ":" + traceCustomBlocks
-            + ":" + traceDistance + ":" + blockIds;
+            + ":" + traceDistanceText() + ":" + blockIds;
     }
 
     private static Set<String> parseIds(String value) {
@@ -81,8 +102,7 @@ public final class LockOnSettings {
             traceBeds = Boolean.parseBoolean(p.getProperty("traceBeds", "false"));
             traceCustomBlocks = Boolean.parseBoolean(p.getProperty("traceCustomBlocks", "false"));
             traceCustomEntities = Boolean.parseBoolean(p.getProperty("traceCustomEntities", "false"));
-            traceDistance = Math.max(8, Math.min(32,
-                Integer.parseInt(p.getProperty("traceDistance", "24"))));
+            setTraceDistanceText(p.getProperty("traceDistance", "24"));
             blockIds = p.getProperty("tracerBlockIds", "minecraft:diamond_ore");
             entityIds = p.getProperty("tracerEntityIds", "minecraft:zombie");
             customBlockIds = parseIds(blockIds);
@@ -101,7 +121,7 @@ public final class LockOnSettings {
         p.setProperty("traceBeds", Boolean.toString(traceBeds));
         p.setProperty("traceCustomBlocks", Boolean.toString(traceCustomBlocks));
         p.setProperty("traceCustomEntities", Boolean.toString(traceCustomEntities));
-        p.setProperty("traceDistance", Integer.toString(traceDistance));
+        p.setProperty("traceDistance", traceDistanceText());
         p.setProperty("tracerBlockIds", blockIds);
         p.setProperty("tracerEntityIds", entityIds);
         try {
@@ -174,12 +194,10 @@ public final class LockOnSettings {
                 customEntityIds = parseIds(v);
             })
             .build());
-        tracers.addEntry(entries.startIntField(
-                Component.literal("Tracer distance (blocks)"), traceDistance)
-            .setDefaultValue(24)
-            .setMin(8)
-            .setMax(32)
-            .setSaveConsumer(v -> traceDistance = Math.max(8, Math.min(32, v)))
+        tracers.addEntry(entries.startStrField(
+                Component.literal("Tracer distance: 8-32 or inf"), traceDistanceText())
+            .setDefaultValue("24")
+            .setSaveConsumer(LockOnSettings::setTraceDistanceText)
             .build());
 
         builder.setSavingRunnable(LockOnSettings::save);

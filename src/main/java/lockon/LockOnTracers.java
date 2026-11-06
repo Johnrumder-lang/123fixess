@@ -1,6 +1,7 @@
 package lockon;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Set;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
@@ -9,24 +10,29 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.player.LocalPlayer;
-import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.Identifier;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.level.ChunkPos;
+import net.minecraft.world.level.chunk.LevelChunkSection;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.Vec3;
+import net.minecraft.core.BlockPos;
 
 /**
- * Optional screen-space tracers. Never sends packets, scans unloaded worlds,
- * or modifies block/entity state. A bounded incremental block scan prevents
- * frame stalls around large groups of storage blocks or beds.
+ * Screen-space tracer overlay. "inf" means no custom distance filter for
+ * client-loaded entities and scanning loaded chunks only for blocks.
+ * Never requests unseen world data from a server.
  */
 public final class LockOnTracers {
-    private static final int BLOCK_SCAN_BATCH = 2200;
-    private static final int HEIGHT_RADIUS = 12;
-    private static final int MAX_BLOCK_MARKERS = 160;
-    private static final int MAX_ENTITY_MARKERS = 100;
+    // Bound the amount of work each client tick and the number of lines
+    // each frame, especially when "inf" is used in a dense world.
+    private static final int BLOCK_SCAN_BATCH = 8000;
+    private static final int MAX_BLOCK_MARKERS = 600;
+    private static final int MAX_ENTITY_MARKERS = 300;
+    private static final int HEIGHT_RADIUS_FINITE = 12;
+
     private static final int COLOR_PLAYERS = 0xDFFF5555;
     private static final int COLOR_CHESTS = 0xDFFFC24D;
     private static final int COLOR_BEDS = 0xDF6EC7FF;
@@ -37,11 +43,17 @@ public final class LockOnTracers {
 
     private static ClientLevel scanWorld;
     private static BlockPos scanOrigin;
+    private static int scanOriginChunkX;
+    private static int scanOriginChunkZ;
     private static int scanRadius;
-    private static int scanCursor = -1;
+    private static int chunkCursor = -1;
+    private static int sectionCursor;
+    private static int cellCursor;
     private static int tickCount;
     private static int nextScanTick;
+    private static boolean scanningUnlimited;
     private static String lastScanSignature = "";
+    private static List<ChunkPos> chunks = List.of();
     private static final List<Marker> scanResults = new ArrayList<>();
     private static List<Marker> visibleBlocks = List.of();
 
@@ -55,10 +67,59 @@ public final class LockOnTracers {
     }
 
     private static void resetScan() {
-        scanCursor = -1;
+        chunkCursor = -1;
+        sectionCursor = 0;
+        cellCursor = 0;
+        chunks = List.of();
         scanResults.clear();
         visibleBlocks = List.of();
         nextScanTick = 0;
+    }
+
+    private static void beginScan(Minecraft mc) {
+        LocalPlayer player = mc.player;
+        if (player == null || mc.level == null) return;
+        scanOrigin = BlockPos.containing(player.getX(), player.getY(), player.getZ());
+        scanOriginChunkX = scanOrigin.getX() >> 4;
+        scanOriginChunkZ = scanOrigin.getZ() >> 4;
+        scanningUnlimited = LockOnSettings.unlimitedTraceDistance();
+        scanRadius = LockOnSettings.traceDistance();
+
+        // Infinite mode covers the client's configured view distance plus
+        // the normal edge padding, but never tries to load a missing chunk.
+        int radiusChunks = scanningUnlimited
+            ? Math.max(2, Math.min(40, mc.options.renderDistance().get() + 2))
+            : (scanRadius + 15) / 16 + 1;
+
+        List<ChunkPos> found = new ArrayList<>();
+        for (int dx = -radiusChunks; dx <= radiusChunks; dx++) {
+            for (int dz = -radiusChunks; dz <= radiusChunks; dz++) {
+                int cx = scanOriginChunkX + dx;
+                int cz = scanOriginChunkZ + dz;
+                if (mc.level.hasChunk(cx, cz)) found.add(new ChunkPos(cx, cz));
+            }
+        }
+        // Nearest chunks first: even a huge scan shows nearby items quickly.
+        found.sort(Comparator.comparingLong(p -> {
+            long dx = p.x - (long) scanOriginChunkX;
+            long dz = p.z - (long) scanOriginChunkZ;
+            return dx * dx + dz * dz;
+        }));
+        chunks = found;
+        scanResults.clear();
+        chunkCursor = 0;
+        sectionCursor = 0;
+        cellCursor = 0;
+    }
+
+    private static int blockColor(BlockState state, Set<String> customBlocks) {
+        if (state.isAir()) return 0;
+        String id = BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString();
+        String name = id.substring(id.indexOf(':') + 1);
+        if (LockOnSettings.traceChests() && name.contains("chest")) return COLOR_CHESTS;
+        if (LockOnSettings.traceBeds() && name.endsWith("_bed")) return COLOR_BEDS;
+        if (LockOnSettings.traceCustomBlocks() && customBlocks.contains(id)) return COLOR_CUSTOM_BLOCKS;
+        return 0;
     }
 
     private static void scanTick(Minecraft mc) {
@@ -69,65 +130,113 @@ public final class LockOnTracers {
         }
         if (mc.player == null || mc.level == null) return;
 
-        boolean scanBlocks = LockOnSettings.traceChests()
+        boolean wantsBlocks = LockOnSettings.traceChests()
             || LockOnSettings.traceBeds() || LockOnSettings.traceCustomBlocks();
         String signature = LockOnSettings.scanSignature();
         if (!signature.equals(lastScanSignature)) {
             lastScanSignature = signature;
             resetScan();
         }
-        if (!scanBlocks) {
-            visibleBlocks = List.of();
-            scanCursor = -1;
+        if (!wantsBlocks) {
+            resetScan();
             return;
         }
-        if (scanCursor < 0) {
-            if (tickCount < nextScanTick) return;
-            scanRadius = LockOnSettings.traceDistance();
-            scanOrigin = BlockPos.containing(mc.player.getX(), mc.player.getY(), mc.player.getZ());
-            scanResults.clear();
-            scanCursor = 0;
+
+        // An in-progress scan should not keep following an old player position
+        // after they travel into a new part of the world.
+        if (scanOrigin != null && chunkCursor >= 0) {
+            int chunkX = ((int) Math.floor(mc.player.getX())) >> 4;
+            int chunkZ = ((int) Math.floor(mc.player.getZ())) >> 4;
+            if (Math.abs(chunkX - scanOriginChunkX) > 1
+                || Math.abs(chunkZ - scanOriginChunkZ) > 1) resetScan();
         }
 
-        int side = 2 * scanRadius + 1;
-        int height = 2 * HEIGHT_RADIUS + 1;
-        int count = side * side * height;
+        if (chunkCursor < 0) {
+            if (tickCount < nextScanTick) return;
+            beginScan(mc);
+        }
+
         Set<String> customBlocks = LockOnSettings.customBlockIds();
         int budget = BLOCK_SCAN_BATCH;
+        boolean changed = false;
 
-        while (budget-- > 0 && scanCursor < count) {
-            int index = scanCursor++;
-            int dx = index % side - scanRadius;
-            int dz = (index / side) % side - scanRadius;
-            int dy = index / (side * side) - HEIGHT_RADIUS;
-            int bx = scanOrigin.getX() + dx;
-            int by = scanOrigin.getY() + dy;
-            int bz = scanOrigin.getZ() + dz;
-            if (!mc.level.hasChunk(bx >> 4, bz >> 4)) continue;
-
-            BlockPos pos = new BlockPos(bx, by, bz);
-            BlockState state = mc.level.getBlockState(pos);
-            if (state.isAir()) continue;
-
-            String id = BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString();
-            String path = id.substring(id.indexOf(':') + 1);
-            int color = 0;
-            if (LockOnSettings.traceChests() && path.contains("chest")) {
-                color = COLOR_CHESTS;
-            } else if (LockOnSettings.traceBeds() && path.endsWith("_bed")) {
-                color = COLOR_BEDS;
-            } else if (LockOnSettings.traceCustomBlocks() && customBlocks.contains(id)) {
-                color = COLOR_CUSTOM_BLOCKS;
+        while (budget > 0 && chunkCursor < chunks.size()
+               && scanResults.size() < MAX_BLOCK_MARKERS) {
+            ChunkPos pos = chunks.get(chunkCursor);
+            if (!mc.level.hasChunk(pos.x, pos.z)) {
+                chunkCursor++;
+                sectionCursor = cellCursor = 0;
+                continue;
             }
-            if (color != 0 && scanResults.size() < MAX_BLOCK_MARKERS) {
-                scanResults.add(new Marker(Vec3.atCenterOf(pos), color));
+            var chunk = mc.level.getChunk(pos.x, pos.z);
+            LevelChunkSection[] sections = chunk.getSections();
+            if (sectionCursor >= sections.length) {
+                chunkCursor++;
+                sectionCursor = cellCursor = 0;
+                continue;
+            }
+            LevelChunkSection section = sections[sectionCursor];
+            int baseY = mc.level.getSectionYFromSectionIndex(sectionCursor) << 4;
+            if (!scanningUnlimited && (baseY > scanOrigin.getY() + HEIGHT_RADIUS_FINITE
+                || baseY + 15 < scanOrigin.getY() - HEIGHT_RADIUS_FINITE)) {
+                sectionCursor++;
+                cellCursor = 0;
+                continue;
+            }
+
+            // The palette test is very cheap: skip entire 16x16x16 sections
+            // that do not contain a tracked block, including most stone/air.
+            if (cellCursor == 0 && !section.maybeHas(
+                state -> blockColor(state, customBlocks) != 0)) {
+                sectionCursor++;
+                continue;
+            }
+
+            while (budget > 0 && cellCursor < 4096
+                && scanResults.size() < MAX_BLOCK_MARKERS) {
+                int i = cellCursor++;
+                budget--;
+                int localX = i & 15;
+                int localZ = (i >> 4) & 15;
+                int localY = (i >> 8) & 15;
+                int by = baseY + localY;
+                if (!scanningUnlimited
+                    && Math.abs(by - scanOrigin.getY()) > HEIGHT_RADIUS_FINITE) continue;
+
+                int bx = (pos.x << 4) + localX;
+                int bz = (pos.z << 4) + localZ;
+                if (!scanningUnlimited) {
+                    int dx = bx - scanOrigin.getX();
+                    int dz = bz - scanOrigin.getZ();
+                    if ((long) dx * dx + (long) dz * dz
+                        > (long) scanRadius * scanRadius) continue;
+                }
+
+                BlockState state = section.getBlockState(localX, localY, localZ);
+                int color = blockColor(state, customBlocks);
+                if (color != 0) {
+                    scanResults.add(new Marker(new Vec3(
+                        bx + 0.5, by + 0.5, bz + 0.5), color));
+                    changed = true;
+                }
+            }
+            if (cellCursor >= 4096) {
+                sectionCursor++;
+                cellCursor = 0;
             }
         }
-        if (scanCursor >= count) {
+
+        // Publish partial discoveries, instead of making infinity mode wait
+        // for every section to be visited before any tracer can appear.
+        if (changed && tickCount % 4 == 0) {
+            visibleBlocks = List.copyOf(scanResults);
+        }
+        if (chunkCursor >= chunks.size() || scanResults.size() >= MAX_BLOCK_MARKERS) {
             visibleBlocks = List.copyOf(scanResults);
             scanResults.clear();
-            scanCursor = -1;
-            nextScanTick = tickCount + 12;
+            chunks = List.of();
+            chunkCursor = -1;
+            nextScanTick = tickCount + (scanningUnlimited ? 80 : 20);
         }
     }
 
@@ -152,7 +261,9 @@ public final class LockOnTracers {
         Vec3 up = right.cross(forward).normalize();
         double fov = Math.max(35.0, Math.min(110.0, mc.options.fov().get()));
         double focal = height / (2.0 * Math.tan(Math.toRadians(fov / 2.0)));
-        double maxDistanceSq = (double) LockOnSettings.traceDistance() * LockOnSettings.traceDistance();
+        double maxDistanceSq = LockOnSettings.unlimitedTraceDistance()
+            ? Double.POSITIVE_INFINITY
+            : (double) LockOnSettings.traceDistance() * LockOnSettings.traceDistance();
 
         if (players) {
             for (Player other : mc.level.players()) {
@@ -181,8 +292,6 @@ public final class LockOnTracers {
         if (blocks) {
             for (Marker marker : visibleBlocks) {
                 if (marker.pos.distanceToSqr(eye) > maxDistanceSq) continue;
-                // The cached markers are categorized during scanning;
-                // changing a toggle immediately clears the scan cache.
                 drawTracer(graphics, eye, forward, right, up, focal, marker.pos, marker.color);
             }
         }
@@ -193,8 +302,7 @@ public final class LockOnTracers {
                                    double focal, Vec3 target, int color) {
         Vec3 relative = target.subtract(eye);
         double depth = relative.dot(forward);
-        // Only draw markers in front of the camera. Targets outside the
-        // field of view are represented by a line toward the screen edge.
+        // Screen-space overlay: targets behind the camera are not projected.
         if (depth <= 0.05) return;
 
         int width = graphics.guiWidth();
