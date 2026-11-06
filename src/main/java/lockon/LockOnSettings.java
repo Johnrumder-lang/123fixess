@@ -21,8 +21,8 @@ import net.minecraft.network.chat.Component;
 public final class LockOnSettings {
     private static final int DEFAULT_REACH_TENTHS = 30;
     private static int reachTenths = DEFAULT_REACH_TENTHS;
-    private static String teleportPlayerName = "";
     private static boolean tracePlayers;
+    private static boolean traceServerPlayers;
     private static boolean traceChests;
     private static boolean traceBeds;
     private static boolean traceCustomBlocks;
@@ -38,8 +38,8 @@ public final class LockOnSettings {
     private LockOnSettings() {}
 
     public static double attackReach() { return reachTenths / 10.0; }
-    public static String teleportPlayerName() { return teleportPlayerName; }
     public static boolean tracePlayers() { return tracePlayers; }
+    public static boolean traceServerPlayers() { return traceServerPlayers; }
     public static boolean traceChests() { return traceChests; }
     public static boolean traceBeds() { return traceBeds; }
     public static boolean traceCustomBlocks() { return traceCustomBlocks; }
@@ -118,8 +118,8 @@ public final class LockOnSettings {
             // to the vanilla survival sword reach (3.0), without ever
             // attempting to extend the server's permitted hit distance.
             setReach(Double.parseDouble(p.getProperty("attackReach", "3.0")));
-            teleportPlayerName = p.getProperty("teleportPlayerName", "").trim();
             tracePlayers = Boolean.parseBoolean(p.getProperty("tracePlayers", "false"));
+            traceServerPlayers = Boolean.parseBoolean(p.getProperty("traceServerPlayers", "false"));
             traceChests = Boolean.parseBoolean(p.getProperty("traceChests", "false"));
             traceBeds = Boolean.parseBoolean(p.getProperty("traceBeds", "false"));
             traceCustomBlocks = Boolean.parseBoolean(p.getProperty("traceCustomBlocks", "false"));
@@ -139,8 +139,8 @@ public final class LockOnSettings {
         Properties p = new Properties();
         p.setProperty("settingsVersion", "3");
         p.setProperty("attackReach", String.format(Locale.ROOT, "%.1f", attackReach()));
-        p.setProperty("teleportPlayerName", teleportPlayerName);
         p.setProperty("tracePlayers", Boolean.toString(tracePlayers));
+        p.setProperty("traceServerPlayers", Boolean.toString(traceServerPlayers));
         p.setProperty("traceChests", Boolean.toString(traceChests));
         p.setProperty("traceBeds", Boolean.toString(traceBeds));
         p.setProperty("traceCustomBlocks", Boolean.toString(traceCustomBlocks));
@@ -176,17 +176,17 @@ public final class LockOnSettings {
             .setMax(3.0)
             .setSaveConsumer(LockOnSettings::setReach)
             .build());
-        combat.addEntry(entries.startStrField(
-                Component.literal("Teleport username (blank = G target)"), teleportPlayerName)
-            .setDefaultValue("")
-            .setSaveConsumer(v -> teleportPlayerName = v == null ? "" : v.trim())
-            .build());
-
         ConfigCategory tracers = builder.getOrCreateCategory(Component.literal("Tracers"));
         tracers.addEntry(entries.startBooleanToggle(
                 Component.literal("Lines to other players (red)"), tracePlayers)
             .setDefaultValue(false)
             .setSaveConsumer(v -> tracePlayers = v)
+            .build());
+        tracers.addEntry(entries.startBooleanToggle(
+                Component.literal("Server-wide player feed (needs Paper plugin + permission)"),
+                traceServerPlayers)
+            .setDefaultValue(false)
+            .setSaveConsumer(v -> traceServerPlayers = v)
             .build());
         tracers.addEntry(entries.startBooleanToggle(
                 Component.literal("Lines to chests (gold)"), traceChests)

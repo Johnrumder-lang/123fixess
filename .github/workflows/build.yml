@@ -2,7 +2,7 @@ name: Build LockOn Fabric 26.3 (versioned JAR)
 on:
   push:
     branches: [lockon-fixed]
-    paths-ignore: ['LockOn-26.3-v*.jar']
+    paths-ignore: ['LockOn-26.3-v*.jar', 'LockOn-Server-Paper-26.3-v*.jar']
   workflow_dispatch:
 permissions:
   contents: write
@@ -30,18 +30,24 @@ jobs:
           python3 -m py_compile tools/export_server_world.py tools/test_export_server_world.py
           python3 tools/test_export_server_world.py
           python3 tools/export_server_world.py --help >/dev/null
+      - name: Build optional Paper 26.3 live-player companion
+        run: gradle --no-daemon -p server-paper build --stacktrace
       - name: Publish versioned JAR after successful build
         run: |
-          test -s build/libs/lockon-2.5.0.jar
-          cp build/libs/lockon-2.5.0.jar LockOn-26.3-v2.5.0.jar
+          test -s build/libs/lockon-2.6.0.jar
+          test -s server-paper/build/libs/lockon-paper-2.6.0.jar
+          cp build/libs/lockon-2.6.0.jar LockOn-26.3-v2.6.0.jar
+          cp server-paper/build/libs/lockon-paper-2.6.0.jar LockOn-Server-Paper-26.3-v2.6.0.jar
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add -f LockOn-26.3-v2.5.0.jar
+          git add -f LockOn-26.3-v2.6.0.jar LockOn-Server-Paper-26.3-v2.6.0.jar
           if ! git diff --cached --quiet; then
-            git commit -m 'Publish LockOn-26.3-v2.5.0.jar [skip ci]'
+            git commit -m 'Publish LockOn-26.3-v2.6.0.jar [skip ci]'
             git push
           fi
       - uses: actions/upload-artifact@v4
         with:
-          name: LockOn-26.3-v2.5.0
-          path: LockOn-26.3-v2.5.0.jar
+          name: LockOn-26.3-v2.6.0
+          path: |
+            LockOn-26.3-v2.6.0.jar
+            LockOn-Server-Paper-26.3-v2.6.0.jar

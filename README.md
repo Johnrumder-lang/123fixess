@@ -1,56 +1,58 @@
-# LockOn v2.5.0 — Minecraft Java 26.3 / Fabric
+# LockOn v2.6.0 — Minecraft 26.3 Fabric client + optional Paper server plugin
 
-Client-side PvP training assistant with optional tracers. Requires Minecraft 26.3, Java 25, Fabric Loader 0.20.1, Fabric API 0.165.2+26.3 and Cloth Config 26.3.159. Use only with the server owner's and other players' agreement.
+Client combat practice and player/block tracers, designed for consent-based private servers. Minecraft 26.3, Java 25, Fabric Loader 0.20.1, Fabric API 0.165.2+26.3, and Cloth Config API 26.3.159.
 
-## Fixed: first sword/fist hit works, follow-ups do not
+## Removed: Teleportation
+The **V** teleport key, `/tp` command dispatch, and the "Teleport username" setting have been completely removed from the client. Switching from v2.5.0 removes the old field from the config on save. V is unassigned.
 
-Previously, the mod allowed **8-tick sword follow-ups** (and **3-tick fist follow-ups**) even though vanilla damage immunity typically lasts **10 game ticks** after a successful hit. Those early follow-up attacks could show swings or critical-hit particles without new damage or knockback.
+## Fix: show consented players across the whole server world (live)
 
-v2.5.0 changes:
+**The vanilla Minecraft server only streams a limited number of player entities to a client. No client-side `inf` flag can discover players the server has never sent.** The new **LockOnPlayerFeed Paper server companion** is an explicit, administrator-installed data source for real-time player locations outside the normal tracking distance.
 
-- **At least 11 ticks between attacks on the same target**, with both fists and swords. The selected weapon must also meet its actual attack cooldown threshold. The randomized **20–50 ms additional delay** remains. This favors damaging follow-ups over ineffective early attacks.
-- **Combo mode targets 95% attack cooldown** rather than the earlier 86%, leaving a margin above the Minecraft 26.3 sprint-knockback threshold of 90%. Openers still prefer full charge.
-- **No animation-based permanent lockout:** removed the strict `target.hurtTime > 0` condition that could postpone subsequent hits when remote animation state lagged. The 11-tick minimum replaces it.
-- **No required hurt-animation signal to continue the combo:** the client may miss these signals; they are diagnostics, not a prerequisite.
-- **Better pursuit:** across safe, visible flat ground, chase now closes gaps up to 8 blocks without pausing to wait for A* pathfinding after knockback.
-- **Crit jumping is OFF by default** to make ordinary hits easier to verify. Press J to opt into timed critical-hit attempts after regular hits work.
+The companion sends positions approximately **twice per second** over the Minecraft `lockon:players` plugin-message channel. No website, Internet account, external service, or insecure HTTP endpoint is required.
 
-Server PvP permissions, claim/region protection, anti-cheat checks, per-target immunity, knockback resistance and ping still determine whether hits succeed. A critical-hit effect is not proof of server damage.
+### Install (server owner required)
 
-## NEW: Teleport to a player (V)
+**On the Paper Minecraft 26.3 server:**
 
-- **Press G** while looking toward a nearby player to select them; then press **V** to request `/tp <selected-player>`.
-- Alternatively, open **O → Combat**, enter a **Teleport username** (for example `Steve`), save, and press **V**. The entered name takes priority. Clear the field to return to the G-selected target.
-- LockOn does not need to be enabled to request teleportation. The key stops automatic movement and sends the normal Minecraft `/tp` command; it does not alter your local position.
-- **Requires Java Edition operator permission level 2 or the server's explicit command permission.** A normal player on an unmodified multiplayer server cannot teleport to another player by installing a client-only mod. If the command is denied, Minecraft reports that in chat.
-- Only actual Minecraft player usernames are accepted (letters, numbers, underscore; maximum 16 characters). Repeated key presses have a short cooldown.
+1. Download **`LockOn-Server-Paper-26.3-v2.6.0.jar`** from the `lockon-fixed` GitHub branch after the CI build succeeds.
+2. Place this plugin JAR in the server's `plugins/` folder and **restart the server**. This file is NOT a Fabric client mod; do not put it in your own `mods/` folder.
+3. The player whose location may be shared enters **`/lockonshare on`**. Sharing defaults to **OFF** and can be revoked anytime with **`/lockonshare off`**. `/lockonshare status` checks the setting. The server does not broadcast non-consenting players.
+4. Only server viewers with **`lockon.view`** permission receive the feed (**OPs by default**). The Paper plugin also checks Bukkit's `viewer.canSee(target)` so invisible/hidden players are not exposed. Permission administration is controlled by the server owner.
 
-## Features retained
+**On the Fabric 26.3 client:**
 
-- **O → Tracers:** separate players/chests/beds/custom block/custom entity toggles, loaded-chunk `inf` mode, optional admin-exported saved-world block index for a server you administer.
-- **Sword + empty-hand combat**, bow aim assist (bow manually fired), smart chase and 1-block obstacle climbing.
-- **O → Combat:** vanilla Survival melee attempted reach 2.5–3.0 blocks (default 3.0).
-- **U:** attack attempts, observed hurt animations and conservative out-of-reach checks.
-- Optional obstacle mining remains OFF by default.
+1. Replace all earlier LockOn JARs with **`LockOn-26.3-v2.6.0.jar`**. Leave Cloth Config and Fabric API installed.
+2. Press **O → Tracers**, turn on **Server-wide player feed (needs Paper plugin + permission)** and **Unlimited tracer distance (LOADED chunks/entities only)**, then save. The unlimited switch removes the client's *display* range check for both loaded and server-fed players.
+3. In the same world/dimension, red tracer directions now show players who opted in even when their entities are not loaded by your client. Press **U** to check **Server player feed LIVE (N players sharing)**. If the HUD says **NO server feed**, check that the Paper plugin is running, the viewing account has permission, and the network connection is not blocking plugin messages.
+
+**Important boundaries:** This is a live feed only for authorized and opted-in players, NOT an automatic way to reveal everyone on arbitrary servers. No markers can appear without the server companion, server permission, and player opt-in. Screen-space player tracer directions only make sense within the **same dimension**; a player in the Nether cannot be plotted as a direction in the Overworld. Paper servers behind proxies may need forwarding of custom plugin-message channels. The feed is limited to 120 consenting targets per snapshot and cleared if it stops arriving.
+
+### Other tracer modes remain
+- Local client-loaded players, chests, beds, custom blocks, and custom entities.
+- **`inf`** still means *no extra distance filter* on the data your client receives.
+- Optional administrator-exported **`lockon-server-index.tsv`** for static blocks in saved world regions (not live player locations).
+- Optional incremental block scan and bounded rendering for performance.
+
+## Combat practice
+Sword and fist auto-hit at server-valid reach (default 3.0 blocks), with cooldown-aware repeated attacks and sprint-knockback chase. Critical-hit jumps remain off by default and can be enabled with J. Test with consenting players; server rules and damage immunity remain authoritative.
 
 ## Keys
 
-| Key | Action |
+| Key | Purpose |
 |---|---|
-| R | Toggle combat lock-on |
-| G | Select/clear target |
-| H | Smart chase |
-| J | Toggle critical jumps (OFF by default) |
+| R | Toggle combat lock |
+| G | Select/clear player |
+| H | Chase |
+| J | Toggle critical jumps |
 | K | Combo / Precision |
-| B | Opt into destructive obstacle breaking (OFF by default) |
-| O | Settings (teleport username, reach, tracers) |
-| U | Combat diagnostics |
-| **V** | **Request server-authorized /tp to chosen player** |
+| B | Optional obstacle mining (OFF by default) |
+| O | Reach, player-feed, and tracer settings |
+| U | Attack attempts + live player-feed diagnostic |
+| V | **Unassigned (teleport removed)** |
 
-## Installation
+## Build and limitations
 
-After the [GitHub Actions build and tests](https://github.com/Johnrumder-lang/123fixess/actions/workflows/build.yml) pass, remove any earlier LockOn JARs from `mods/` and install `LockOn-26.3-v2.5.0.jar` in your Fabric 26.3 Modrinth instance. Keep compatible Fabric API and Cloth Config installed.
+The CI workflow compiles and tests the Fabric client, checks the offline world index scanner, and builds a distinct **Paper 26.3 plugin JAR** with Java 25. Passing the build does NOT verify server/client interoperability in a live multiplayer session. Verify with a private test server and two consenting players.
 
-### Test reliable combat first
-
-With a consenting opponent, test normal manual melee first. Then use LockOn with **J OFF**, stand within 2.5 blocks, select the target using G, and enable using R. Inspect the **U** diagnostics after several hits. If manual melee hits don't work either, check the server's PvP setting and claim/arena protections. Compiling and running deterministic tests alone cannot prove server-side damage and knockback.
+Download from the [project's versioned build artifacts](https://github.com/Johnrumder-lang/123fixess/actions/workflows/build.yml). Use only with administrator approval and participants' consent.

@@ -47,9 +47,7 @@ public final class LockOnClient implements ClientModInitializer {
     private static boolean ownsMovement;
     private static UUID targetId;
     private static ClientLevel previousLevel;
-    private static KeyMapping toggleKey, selectKey, chaseKey, critKey, mineKey, modeKey, settingsKey, statsKey, teleportKey;
-    private static String selectedPlayerName = "";
-    private static int lastTeleportRequestTick = -1000;
+    private static KeyMapping toggleKey, selectKey, chaseKey, critKey, mineKey, modeKey, settingsKey, statsKey;
     private static UUID trackedVelocityTarget;
     private static Vec3 filteredVelocity = new Vec3(0.0, 0.0, 0.0);
     private static UUID observedHurtTarget;
@@ -87,6 +85,7 @@ public final class LockOnClient implements ClientModInitializer {
 
     @Override public void onInitializeClient() {
         LockOnSettings.load();
+        LockOnPlayerFeedClient.initialize();
         LockOnTracers.initialize();
         toggleKey = key("key.lockon.toggle", InputConstants.KEY_R);
         selectKey = key("key.lockon.target", InputConstants.KEY_G);
@@ -96,7 +95,6 @@ public final class LockOnClient implements ClientModInitializer {
         modeKey = key("key.lockon.mode", InputConstants.KEY_K);
         settingsKey = key("key.lockon.settings", InputConstants.KEY_O);
         statsKey = key("key.lockon.stats", InputConstants.KEY_U);
-        teleportKey = key("key.lockon.teleport", InputConstants.KEY_V);
         ClientTickEvents.END_CLIENT_TICK.register(LockOnClient::tick);
         // Attack packets belong in client gameplay ticks, not in HUD render frames.
         // Rendering can run between vanilla movement packets, so a visual
@@ -114,7 +112,6 @@ public final class LockOnClient implements ClientModInitializer {
             previousLevel = mc.level;
             enabled = false;
             targetId = null;
-            selectedPlayerName = "";
             resetAttackSchedule();
             clearNavigation(mc);
             lastAttackedTarget = null;
@@ -140,14 +137,10 @@ public final class LockOnClient implements ClientModInitializer {
             mc.gui.setScreen(LockOnSettings.createScreen(mc.gui.screen()));
             return;
         }
-        while (teleportKey.consumeClick()) teleportToSelected(mc);
         while (statsKey.consumeClick()) {
-            hint(mc, "Practice: " + attempts + " attack packets, "
-                + hurtSignals + " observed damage animations, "
-                + outOfRangeSkips + " unsafe reach attempts prevented. "
-                + (attempts >= 5 && hurtSignals == 0
-                    ? "No damage observed: test manual hits, PvP and server plugins."
-                    : "Normal target immunity lasts about 10 ticks."));
+            hint(mc, "Attack attempts " + attempts + ", hurt signals "
+                + hurtSignals + ", reach skips " + outOfRangeSkips
+                + "; " + LockOnPlayerFeedClient.status());
         }
         while (toggleKey.consumeClick()) {
             enabled = !enabled;
@@ -162,7 +155,6 @@ public final class LockOnClient implements ClientModInitializer {
         while (selectKey.consumeClick()) {
             if (targetId != null) {
                 targetId = null;
-                selectedPlayerName = "";
                 resetTracking();
                 resetAttackSchedule();
                 lastAttackTick = -1000;
@@ -248,7 +240,6 @@ public final class LockOnClient implements ClientModInitializer {
         while (modeKey.consumeClick()) {}
         while (settingsKey.consumeClick()) {}
         while (statsKey.consumeClick()) {}
-        while (teleportKey.consumeClick()) {}
     }
 
     private static void resetTracking() {
@@ -728,7 +719,6 @@ public final class LockOnClient implements ClientModInitializer {
             hint(mc, "No player visible near the crosshair");
         } else {
             targetId = closest.getUUID();
-            selectedPlayerName = closest.getName().getString();
             resetTracking();
             lastAttackTick = -1000;
             lastAttackedTarget = null;
@@ -736,26 +726,6 @@ public final class LockOnClient implements ClientModInitializer {
             nextPlanAt = 0;
             hint(mc, "Target: " + closest.getName().getString());
         }
-    }
-
-    // Teleportation is server-authoritative. A plain /tp command works only
-    // when the server grants permissions; this cannot bypass permissions.
-    // O → Combat can specify a distant name. Blank uses the G-selected player.
-    private static void teleportToSelected(Minecraft mc) {
-        if (mc.player == null || mc.level == null) return;
-        if (ticks - lastTeleportRequestTick < 30) return;
-        String requested = LockOnSettings.teleportPlayerName().trim();
-        String playerName = requested.isEmpty() ? selectedPlayerName : requested;
-        if (!playerName.matches("[A-Za-z0-9_]{1,16}")) {
-            hint(mc, "Choose a player with G or enter their username in O > Combat.");
-            return;
-        }
-        lastTeleportRequestTick = ticks;
-        stopActions(mc);
-        resetAttackSchedule();
-        mc.player.connection.sendCommand("tp " + playerName);
-        hint(mc, "Requested /tp " + playerName
-            + " (requires server permission; check chat for the result)");
     }
 
     private static void hint(Minecraft mc, String text) {

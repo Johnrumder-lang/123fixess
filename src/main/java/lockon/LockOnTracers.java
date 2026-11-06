@@ -125,6 +125,7 @@ public final class LockOnTracers {
     }
 
     private static void scanTick(Minecraft mc) {
+        LockOnPlayerFeedClient.tick(mc);
         LockOnWorldIndex.tick(mc);
         tickCount++;
         if (mc.level != scanWorld) {
@@ -248,7 +249,7 @@ public final class LockOnTracers {
         LocalPlayer player = mc.player;
         if (player == null || mc.level == null || mc.gui.screen() != null) return;
 
-        boolean players = LockOnSettings.tracePlayers();
+        boolean players = LockOnSettings.tracePlayers() || LockOnSettings.traceServerPlayers();
         boolean customEntities = LockOnSettings.traceCustomEntities();
         boolean blocks = LockOnSettings.traceChests()
             || LockOnSettings.traceBeds() || LockOnSettings.traceCustomBlocks();
@@ -274,6 +275,28 @@ public final class LockOnTracers {
                 if (other.distanceToSqr(player) > maxDistanceSq) continue;
                 Vec3 target = other.position().add(0.0, other.getBbHeight() * 0.65, 0.0);
                 drawTracer(graphics, eye, forward, right, up, focal, target, COLOR_PLAYERS);
+            }
+            if (LockOnSettings.traceServerPlayers()) {
+                String dimension = mc.level.dimension().identifier().toString();
+                for (LockOnPlayerPositionsPayload.Position remote
+                     : LockOnPlayerFeedClient.positions()) {
+                    // The player feed can report other dimensions, but a
+                    // 3D direction only exists within our current dimension.
+                    if (!remote.dimension().equals(dimension)) continue;
+                    if (remote.name().equalsIgnoreCase(player.getName().getString())) continue;
+
+                    boolean alreadyLoaded = false;
+                    for (Player local : mc.level.players()) {
+                        if (local.getName().getString().equalsIgnoreCase(remote.name())) {
+                            alreadyLoaded = true;
+                            break;
+                        }
+                    }
+                    if (alreadyLoaded) continue;
+                    if (remote.pos().distanceToSqr(eye) > maxDistanceSq) continue;
+                    drawTracer(graphics, eye, forward, right, up, focal,
+                        remote.pos().add(0.0, 1.15, 0.0), COLOR_PLAYERS);
+                }
             }
         }
 
