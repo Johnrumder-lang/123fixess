@@ -1,5 +1,7 @@
 {
   "key.lockon.toggle": "LockOn: toggle",
-  "key.lockon.target": "LockOn: select/clear target",
-  "key.lockon.movement": "LockOn: chase/strafe assist"
+  "key.lockon.target": "LockOn: select or clear target",
+  "key.lockon.movement": "LockOn: smart chase/strafe",
+  "key.lockon.criticals": "LockOn: timed jump criticals",
+  "key.lockon.mining": "LockOn: allow breaking obstacles (destructive)"
 }

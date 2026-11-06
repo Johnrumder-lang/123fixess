@@ -1,27 +1,24 @@
-# LockOn v1.3.0 — Minecraft 26.3 / Fabric
+# LockOn v1.4.0 — Minecraft 26.3 / Fabric
 
-Client-only lock-on mod for **consensual testing on a private PvP server**. Requires Minecraft 26.3, Java 25, Fabric Loader and matching Fabric API.
+This client-only PvP practice mod is intended for a **private server with consent**. Requires Java 25, Minecraft 26.3, Fabric Loader 0.20.1 and Fabric API 0.165.2+26.3.
 
-## Download
-**Install `LockOn-26.3-v1.3.0.jar` only after [the GitHub Actions build](https://github.com/Johnrumder-lang/123fixess/actions/workflows/build.yml) succeeds.** If the file doesn't exist in this branch yet, it is not ready. Do not use the old untested 1.2.0 JAR.
+## Changes
+- **Fast lock-on aiming** tracks player movement.
+- **Critical-hit attempts**: when a full-charge sword attack is ready, the mod can jump and time a hit during the falling phase (normal Minecraft mechanics). Not every attack can be critical; low ceilings, terrain and movement can prevent it.
+- **Improved combo spacing**: orbit strafes, preserves about 2–3 blocks of distance, and resets sprint briefly after attacks.
+- **A* navigation**: short-range cost-based route planning compares a route around obstacles with a one-block jump or short drop, avoids obvious fluids/hazards and refuses large drops.
+- **Optional block breaking**: compares estimated mining time with other routes and can break up to two ordinary non-container blocks on a chosen step, using vanilla mining packets. **Off by default.** Does not bypass protected server regions, tool speed, or mining permissions.
+- Limited to a 12-block local navigation radius and 17-block target tracking range. It is not full-world pathfinding, can't guarantee an optimal route, and may still get stuck. Use in a flat disposable test arena first.
 
-## Changes in v1.3.0
-- Predictive, faster tracking that follows moving players.
-- Sword attacks target the actual entity hitbox rather than depending on a stale raycast; they require line of sight, **normal 3-block sword reach** and the **full attack cooldown**.
-- New **optional movement assist** chases, strafes and briefly releases sprint between attacks to try to keep combos. This is not pathfinding and may walk into walls, hazards or off ledges. Test somewhere safe.
-- The goal is reliable practice, not guaranteed wins. Server lag, knockback, ping and defense still matter.
-
-## Controls
-- **R** = toggle lock-on.
-- **G** = select the visible player near the crosshair; G again clears them.
-- **H** = toggle automatic chase + strafe (on by default, only acts while R is enabled and a target is selected).
-- **Turn R off before manual movement**. Automatic movement temporarily controls W/A/S/D and sprint. If manual keys feel stuck, release and press them again.
+## Keybindings
+- **R**: toggle LockOn.
+- **G**: select/clear a visible player near crosshair.
+- **H**: toggle smart chase and strafe (on by default).
+- **J**: toggle timed critical-hit jumps (on by default).
+- **B**: toggle obstacle block breaking (**off by default, destructive**).
 
 ## Install
-1. Open Modrinth App → your Minecraft 26.3 Fabric instance → Open folder.
-2. Remove older LockOn JARs from `mods/`, particularly `LockOn-26.3-v1.2.1.jar`.
-3. Put `LockOn-26.3-v1.3.0.jar` into `mods/` and launch.
-4. Press G facing a friend, then R to activate. Toggle H to use or disable combo movement.
+Remove ALL previous LockOn JARs from the Modrinth profile's `mods/` folder. Install only the versioned **`LockOn-26.3-v1.4.0.jar`** after a successful GitHub Actions build. Turn off LockOn with R if you need manual control. Mining is your responsibility; only enable on worlds where you are authorized to break blocks.
 
 ## Build
-With JDK 25 + Gradle 9.6.0, run `gradle build`; the normal compiled output is `build/libs/lockon-1.3.0.jar`. GitHub Actions publishes a version-named copy if compilation succeeds.
+[GitHub Actions](https://github.com/Johnrumder-lang/123fixess/actions/workflows/build.yml) compiles with real Minecraft/Fabric APIs, publishes a JAR to this branch after a successful build, and provides it as a build artifact.

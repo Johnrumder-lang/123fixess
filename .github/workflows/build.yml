@@ -18,20 +18,20 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '9.6.0'
-      - name: Compile against real Minecraft/Fabric API
+      - name: Compile against Minecraft 26.3 and Fabric API
         run: gradle --no-daemon build --stacktrace
-      - name: Publish successful versioned JAR
+      - name: Publish versioned JAR after successful build
         run: |
-          test -s build/libs/lockon-1.3.0.jar
-          cp build/libs/lockon-1.3.0.jar LockOn-26.3-v1.3.0.jar
+          test -s build/libs/lockon-1.4.0.jar
+          cp build/libs/lockon-1.4.0.jar LockOn-26.3-v1.4.0.jar
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add -f LockOn-26.3-v1.3.0.jar
+          git add -f LockOn-26.3-v1.4.0.jar
           if ! git diff --cached --quiet; then
-            git commit -m 'Publish LockOn-26.3-v1.3.0.jar [skip ci]'
+            git commit -m 'Publish LockOn-26.3-v1.4.0.jar [skip ci]'
             git push
           fi
       - uses: actions/upload-artifact@v4
         with:
-          name: LockOn-26.3-v1.3.0
-          path: LockOn-26.3-v1.3.0.jar
+          name: LockOn-26.3-v1.4.0
+          path: LockOn-26.3-v1.4.0.jar
