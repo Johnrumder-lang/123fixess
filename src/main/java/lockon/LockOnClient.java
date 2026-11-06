@@ -2,6 +2,8 @@ package lockon;
 
 import com.mojang.blaze3d.platform.InputConstants;
 import java.util.UUID;
+import java.util.concurrent.ThreadLocalRandom;
+import net.minecraft.world.item.Items;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.keymapping.v1.KeyMappingHelper;
@@ -24,7 +26,13 @@ import net.minecraft.world.phys.Vec3;
  */
 public final class LockOnClient implements ClientModInitializer {
     private static final double TARGET_RANGE = 17.0;
-    private static final double ATTACK_REACH = 3.0;
+    // Aim/attack ray length is 3.1 blocks; actual hits still require server-valid reach.
+    private static final double ATTACK_REACH = 3.1;
+    private static final double BOW_TRACK_RANGE = 54.0;
+    private static final double ARROW_SPEED = 3.0;
+    private static final double ARROW_GRAVITY = 0.05;
+    private static int meleeReadyAt = -1;
+    private static UUID scheduledTarget;
     private static boolean enabled;
     private static boolean chase = true;
     private static boolean criticals = true;
@@ -63,6 +71,7 @@ public final class LockOnClient implements ClientModInitializer {
             previousLevel = mc.level;
             enabled = false;
             targetId = null;
+            resetAttackSchedule();
             clearNavigation(mc);
         }
         LocalPlayer me = mc.player;
@@ -74,12 +83,13 @@ public final class LockOnClient implements ClientModInitializer {
 
         while (toggleKey.consumeClick()) {
             enabled = !enabled;
-            if (!enabled) stopActions(mc);
+            if (!enabled) { stopActions(mc); resetAttackSchedule(); }
             hint(mc, "LockOn " + (enabled ? "ON" : "OFF"));
         }
         while (selectKey.consumeClick()) {
             if (targetId != null) {
                 targetId = null;
+                resetAttackSchedule();
                 stopActions(mc);
                 hint(mc, "Target cleared");
             } else selectTarget(mc);
@@ -102,19 +112,30 @@ public final class LockOnClient implements ClientModInitializer {
 
         if (!enabled || targetId == null || !me.isAlive() || me.isSpectator()) {
             stopActions(mc);
+            resetAttackSchedule();
             return;
         }
+
+        boolean bowEquipped = me.getMainHandItem().is(Items.BOW);
         Player target = mc.level.getPlayerByUUID(targetId);
+        double trackingRange = bowEquipped ? BOW_TRACK_RANGE : TARGET_RANGE;
         if (target == null || target == me || !target.isAlive() || target.isSpectator()
-            || me.distanceTo(target) > TARGET_RANGE) {
+            || me.distanceTo(target) > trackingRange) {
             stopActions(mc);
+            resetAttackSchedule();
             return;
         }
 
-        // The target always remains visible to the aiming controller;
-        // navigation uses strafe/forward relative to the target-oriented camera.
-        aimAt(me, target);
+        // Bow: predictive aim while the user draws and shoots normally.
+        // Do not auto-chase while aiming a bow; it spoils projectile shots.
+        if (bowEquipped) {
+            stopActions(mc);
+            resetAttackSchedule();
+            aimBow(me, target);
+            return;
+        }
 
+        aimAt(me, target);
         if (chase && !me.isPassenger() && !me.isFallFlying() && !me.isInWater()) {
             chaseTarget(mc, me, target);
         } else {
@@ -150,32 +171,86 @@ public final class LockOnClient implements ClientModInitializer {
         me.setXRot(Mth.clamp(me.getXRot() + (float) ((pitch - me.getXRot()) * f), -90, 90));
     }
 
+    private static void resetAttackSchedule() {
+        meleeReadyAt = -1;
+        scheduledTarget = null;
+    }
+
+    private static void aimBow(LocalPlayer me, Player target) {
+        Vec3 eye = me.getEyePosition();
+        Vec3 center = new Vec3(target.getX(), target.getY() + target.getBbHeight() * 0.67, target.getZ());
+        Vec3 delta = center.subtract(eye);
+        // Approximate flight time in ticks at a fully drawn vanilla bow's speed.
+        // Draw the bow fully for best compensation, and account for target movement.
+        double flightTicks = Math.min(25.0, Math.max(1.0, Math.hypot(delta.x, delta.z) / ARROW_SPEED));
+        Vec3 speed = target.getDeltaMovement();
+        Vec3 lead = new Vec3(
+            Mth.clamp(speed.x * flightTicks * 0.85, -4.0, 4.0),
+            Mth.clamp(speed.y * flightTicks * 0.30, -1.0, 1.0),
+            Mth.clamp(speed.z * flightTicks * 0.85, -4.0, 4.0));
+        Vec3 predicted = center.add(lead).subtract(eye);
+        double horizontal = Math.hypot(predicted.x, predicted.z);
+        if (horizontal < 0.01) return;
+        // Low-angle ballistic trajectory with gravity; falls back to straight aim
+        // if the target is too far away to reach at this velocity.
+        double velocity2 = ARROW_SPEED * ARROW_SPEED;
+        double discriminant = velocity2 * velocity2 - ARROW_GRAVITY
+            * (ARROW_GRAVITY * horizontal * horizontal + 2.0 * predicted.y * velocity2);
+        double elevation = discriminant >= 0
+            ? Math.atan((velocity2 - Math.sqrt(discriminant)) / (ARROW_GRAVITY * horizontal))
+            : Math.atan2(predicted.y, horizontal);
+        float yaw = (float) Math.toDegrees(Math.atan2(predicted.z, predicted.x)) - 90.0f;
+        float pitch = (float) -Math.toDegrees(elevation);
+        me.setYRot(me.getYRot() + Mth.wrapDegrees(yaw - me.getYRot()) * 0.94f);
+        me.setXRot(Mth.clamp(me.getXRot() + (pitch - me.getXRot()) * 0.94f, -90, 90));
+    }
+
     private static void attack(Minecraft mc, LocalPlayer me, Player target) {
         if (mc.gameMode == null || me.isUsingItem() || !me.getMainHandItem().is(ItemTags.SWORDS)
-            || ticks - lastAttackTick < 3 || miningPos != null) return;
-        if (me.getAttackStrengthScale(0.0f) < 0.999f || !me.hasLineOfSight(target)) return;
+            || miningPos != null || ticks - lastAttackTick < 3) {
+            resetAttackSchedule();
+            return;
+        }
+        // Ray is 3.1 blocks long; this does not enlarge Minecraft/server entity reach.
         Vec3 eye = me.getEyePosition();
         Vec3 ray = eye.add(me.getViewVector(1.0f).scale(ATTACK_REACH));
-        if (target.getBoundingBox().inflate(0.10).clip(eye, ray).isEmpty()) return;
-
-        // A jump crit only works while falling, not sprinting, in normal air.
-        boolean falling = !me.onGround() && me.fallDistance > 0.0f
-            && me.getDeltaMovement().y < -0.01
-            && !me.isInWater() && !me.onClimbable() && !me.isPassenger();
-        if (criticals && !falling && me.onGround() && mc.level != null
-            && ticks >= nextCritJumpAt && me.distanceTo(target) < 2.8
-            && Navigator.safeToJump(mc.level, me)) {
-            me.setSprinting(false);
-            me.jumpFromGround();
-            lastCritJumpTick = ticks;
-            nextCritJumpAt = ticks + 16;
+        if (!me.hasLineOfSight(target)
+            || target.getBoundingBox().inflate(0.05).clip(eye, ray).isEmpty()
+            || me.getAttackStrengthScale(0.0f) < 0.999f) {
+            resetAttackSchedule();
             return;
         }
 
-        // Let a freshly started crit-jump reach its descending phase, but don't
-        // endlessly delay normal attacks when the target moves away.
-        if (criticals && !falling && ticks - lastCritJumpTick < 12) return;
-        if (falling) {
+        // 20 TPS: random 2 or 3 tick pause (100-150 ms) once the
+        // actual sword cooldown is fully charged and target is hittable.
+        if (!target.getUUID().equals(scheduledTarget) || meleeReadyAt < 0) {
+            scheduledTarget = target.getUUID();
+            meleeReadyAt = ticks + 2 + ThreadLocalRandom.current().nextInt(2);
+            return;
+        }
+        if (ticks < meleeReadyAt) return;
+
+        boolean falling = !me.onGround() && me.fallDistance > 0.0f
+            && me.getDeltaMovement().y < -0.01
+            && !me.isInWater() && !me.onClimbable() && !me.isPassenger();
+        // Airborne opponents need prompt combo follow-ups more than delayed crit hops.
+        boolean opponentAirborne = !target.onGround() || target.getDeltaMovement().y > 0.08;
+        boolean goodCritOpportunity = criticals && !opponentAirborne
+            && me.onGround() && mc.level != null
+            && me.distanceTo(target) < 2.65 && ticks >= nextCritJumpAt
+            && Navigator.safeToJump(mc.level, me);
+
+        if (goodCritOpportunity) {
+            me.setSprinting(false);
+            releaseSprint(mc);
+            me.jumpFromGround();
+            lastCritJumpTick = ticks;
+            nextCritJumpAt = ticks + 18;
+            // Keep this same attack scheduled until the descending phase.
+            return;
+        }
+        if (criticals && !falling && ticks - lastCritJumpTick < 9) return;
+        if (falling && criticals) {
             me.setSprinting(false);
             releaseSprint(mc);
         }
@@ -183,8 +258,8 @@ public final class LockOnClient implements ClientModInitializer {
         mc.gameMode.attack(me, target);
         me.swing(InteractionHand.MAIN_HAND, me.getMainHandItem().getAttackAnimation(), false);
         lastAttackTick = ticks;
-        // Keep the target at combo distance; reset sprint for the next contact.
-        sprintResetTicks = 2;
+        resetAttackSchedule();
+        sprintResetTicks = opponentAirborne ? 1 : 2;
     }
 
     private static void chaseTarget(Minecraft mc, LocalPlayer me, Player target) {
@@ -198,9 +273,14 @@ public final class LockOnClient implements ClientModInitializer {
             double sideX = left ? -Math.cos(yaw) : Math.cos(yaw);
             double sideZ = left ? -Math.sin(yaw) : Math.sin(yaw);
             if (!safeSide(mc.level, me, sideX, sideZ)) left = !left;
-            boolean forward = d > 2.42 && sprintResetTicks == 0;
-            boolean back = d < 1.55;
-            setMovement(mc, forward, back, left, !left, forward && !criticals);
+            boolean airborneOpponent = !target.onGround() || target.getDeltaMovement().y > 0.08;
+            // Stay close enough to follow knockback without walking directly into them.
+            boolean forward = d > (airborneOpponent ? 1.95 : 2.35) && sprintResetTicks == 0;
+            boolean back = !airborneOpponent && d < 1.40;
+            boolean inCritWindow = ticks - lastCritJumpTick <= 9 && !me.onGround();
+            // Sprint between contacts; disable it for the actual falling crit strike.
+            boolean sprintNow = forward && me.onGround() && !inCritWindow;
+            setMovement(mc, forward, back, left, !left, sprintNow);
             if (sprintResetTicks > 0) sprintResetTicks--;
             return;
         }
@@ -330,9 +410,10 @@ public final class LockOnClient implements ClientModInitializer {
         Vec3 look = me.getViewVector(1.0f);
         Player closest = null;
         double bestDot = 0.55;
+        double range = me.getMainHandItem().is(Items.BOW) ? BOW_TRACK_RANGE : TARGET_RANGE;
         for (Player p : mc.level.players()) {
             if (p == me || p.isSpectator() || !p.isAlive()
-                || me.distanceTo(p) > TARGET_RANGE || !me.hasLineOfSight(p)) continue;
+                || me.distanceTo(p) > range || !me.hasLineOfSight(p)) continue;
             Vec3 vector = new Vec3(p.getX(), p.getY() + p.getBbHeight() * 0.7, p.getZ()).subtract(eye);
             if (vector.lengthSqr() == 0) continue;
             double dot = look.dot(vector.normalize());
@@ -342,6 +423,7 @@ public final class LockOnClient implements ClientModInitializer {
             hint(mc, "No player visible near the crosshair");
         } else {
             targetId = closest.getUUID();
+            resetAttackSchedule();
             nextPlanAt = 0;
             hint(mc, "Target: " + closest.getName().getString());
         }
