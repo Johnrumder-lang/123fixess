@@ -47,6 +47,23 @@ public final class LockOnSettings {
         return unlimitedTraceDistance ? "inf" : Integer.toString(traceDistance);
     }
 
+    // This is the text-field consumer. A numeric finite radius must NOT
+    // clear the separate "Infinite" toggle when both entries are saved.
+    public static void setTracerField(String text) {
+        if (text == null) return;
+        String value = text.trim();
+        if (value.equalsIgnoreCase("inf") || value.equalsIgnoreCase("infinity") || value.equals("∞")) {
+            unlimitedTraceDistance = true;
+            return;
+        }
+        try {
+            int parsed = Integer.parseInt(value);
+            traceDistance = Math.max(8, Math.min(32, parsed));
+        } catch (NumberFormatException ignored) {
+            // Keep the last valid value.
+        }
+    }
+
     public static void setTraceDistanceText(String text) {
         if (text == null) return;
         String value = text.trim();
@@ -194,10 +211,17 @@ public final class LockOnSettings {
                 customEntityIds = parseIds(v);
             })
             .build());
+        tracers.addEntry(entries.startBooleanToggle(
+                Component.literal("Unlimited tracer distance (LOADED chunks/entities only)"),
+                unlimitedTraceDistance)
+            .setDefaultValue(false)
+            .setSaveConsumer(v -> unlimitedTraceDistance = v)
+            .build());
         tracers.addEntry(entries.startStrField(
-                Component.literal("Tracer distance: 8-32 or inf"), traceDistanceText())
+                Component.literal("Finite radius: 8-32 (or enter inf)"),
+                Integer.toString(traceDistance))
             .setDefaultValue("24")
-            .setSaveConsumer(LockOnSettings::setTraceDistanceText)
+            .setSaveConsumer(LockOnSettings::setTracerField)
             .build());
 
         builder.setSavingRunnable(LockOnSettings::save);
