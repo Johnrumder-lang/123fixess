@@ -4,5 +4,6 @@
   "key.lockon.movement": "LockOn: smart chase/strafe",
   "key.lockon.criticals": "LockOn: timed jump criticals",
   "key.lockon.mining": "LockOn: allow breaking obstacles (destructive)",
-  "key.lockon.mode": "LockOn: precision/combo attack mode"
+  "key.lockon.mode": "LockOn: precision/combo attack mode",
+  "key.lockon.settings": "LockOn: open settings"
 }
