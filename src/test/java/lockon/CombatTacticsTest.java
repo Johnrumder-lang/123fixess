@@ -13,15 +13,14 @@ public final class CombatTacticsTest {
     }
 
     public static void main(String[] args) {
-        check(CombatTactics.minimumAttackTicks(false, true) == 8,
-            "swords retain the normal combo minimum");
-        check(CombatTactics.minimumAttackTicks(true, true) == 3,
-            "fist combos should not inherit the sword minimum");
-        check(CombatTactics.minimumAttackTicks(true, false) == 2,
-            "fist opener may become eligible when its actual cooldown recovers");
-        check(CombatTactics.minimumAttackTicks(true, true)
-                < CombatTactics.minimumAttackTicks(false, true),
-            "bare hands must be faster than swords");
+        check(CombatTactics.minimumAttackTicks(false, true) == 11,
+            "sword combo waits out victim immunity");
+        check(CombatTactics.minimumAttackTicks(true, true) == 11,
+            "fists also wait out victim immunity");
+        check(CombatTactics.minimumAttackTicks(true, false) == 11,
+            "fist openers do not bypass victim immunity between hits");
+        check(CombatTactics.minimumAttackTicks(false, false) == 11,
+            "precision mode cannot waste packets inside immunity");
         check(CombatTactics.normalizeReach(2.7) == 2.7, "preserve configured sub-3 reach");
         check(CombatTactics.normalizeReach(7.0) == 3.0, "cap at vanilla survival sword reach");
         check(CombatTactics.normalizeReach(Double.NaN) == 3.0, "invalid reach fallback");

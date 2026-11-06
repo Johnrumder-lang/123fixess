@@ -11,9 +11,11 @@ final class CombatTactics {
     private CombatTactics() {}
 
     static int minimumAttackTicks(boolean bareHand, boolean combo) {
-        // Vanilla unarmed cooldown is shorter because bare hands have higher
-        // attack speed. Actual charge is checked separately by Minecraft.
-        return combo ? (bareHand ? 3 : 8) : 2;
+        // The target has a 10-tick damage-immunity window after being hit.
+        // A second packet during that window often shows animation but
+        // causes no damage and no knockback. This applies to swords AND fists,
+        // regardless of the faster cooldown of bare hands.
+        return 11;
     }
 
     static double normalizeReach(double reach) {

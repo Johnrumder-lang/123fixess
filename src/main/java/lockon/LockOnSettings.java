@@ -21,6 +21,7 @@ import net.minecraft.network.chat.Component;
 public final class LockOnSettings {
     private static final int DEFAULT_REACH_TENTHS = 30;
     private static int reachTenths = DEFAULT_REACH_TENTHS;
+    private static String teleportPlayerName = "";
     private static boolean tracePlayers;
     private static boolean traceChests;
     private static boolean traceBeds;
@@ -37,6 +38,7 @@ public final class LockOnSettings {
     private LockOnSettings() {}
 
     public static double attackReach() { return reachTenths / 10.0; }
+    public static String teleportPlayerName() { return teleportPlayerName; }
     public static boolean tracePlayers() { return tracePlayers; }
     public static boolean traceChests() { return traceChests; }
     public static boolean traceBeds() { return traceBeds; }
@@ -116,6 +118,7 @@ public final class LockOnSettings {
             // to the vanilla survival sword reach (3.0), without ever
             // attempting to extend the server's permitted hit distance.
             setReach(Double.parseDouble(p.getProperty("attackReach", "3.0")));
+            teleportPlayerName = p.getProperty("teleportPlayerName", "").trim();
             tracePlayers = Boolean.parseBoolean(p.getProperty("tracePlayers", "false"));
             traceChests = Boolean.parseBoolean(p.getProperty("traceChests", "false"));
             traceBeds = Boolean.parseBoolean(p.getProperty("traceBeds", "false"));
@@ -136,6 +139,7 @@ public final class LockOnSettings {
         Properties p = new Properties();
         p.setProperty("settingsVersion", "3");
         p.setProperty("attackReach", String.format(Locale.ROOT, "%.1f", attackReach()));
+        p.setProperty("teleportPlayerName", teleportPlayerName);
         p.setProperty("tracePlayers", Boolean.toString(tracePlayers));
         p.setProperty("traceChests", Boolean.toString(traceChests));
         p.setProperty("traceBeds", Boolean.toString(traceBeds));
@@ -171,6 +175,11 @@ public final class LockOnSettings {
             .setMin(2.5)
             .setMax(3.0)
             .setSaveConsumer(LockOnSettings::setReach)
+            .build());
+        combat.addEntry(entries.startStrField(
+                Component.literal("Teleport username (blank = G target)"), teleportPlayerName)
+            .setDefaultValue("")
+            .setSaveConsumer(v -> teleportPlayerName = v == null ? "" : v.trim())
             .build());
 
         ConfigCategory tracers = builder.getOrCreateCategory(Component.literal("Tracers"));

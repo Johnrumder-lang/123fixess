@@ -6,5 +6,6 @@
   "key.lockon.mining": "LockOn: allow breaking obstacles (destructive)",
   "key.lockon.mode": "LockOn: precision/combo attack mode",
   "key.lockon.settings": "LockOn: open settings",
-  "key.lockon.stats": "LockOn: combat practice statistics"
+  "key.lockon.stats": "LockOn: combat practice statistics",
+  "key.lockon.teleport": "LockOn: teleport to player (server permission required)"
 }

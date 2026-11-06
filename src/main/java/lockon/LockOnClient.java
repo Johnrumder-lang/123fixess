@@ -38,14 +38,18 @@ public final class LockOnClient implements ClientModInitializer {
     private static UUID scheduledTarget;
     private static boolean enabled;
     private static boolean chase = true;
-    private static boolean criticals = true;
+    // Off by default until reliable ordinary follow-up hits are confirmed.
+    // Press J to opt into jump criticals after testing regular attacks.
+    private static boolean criticals = false;
     private static boolean precisionMode = false; // K toggles full-charge-only attacks
     // Destructive behavior is opt-in by pressing B.
     private static boolean mining = false;
     private static boolean ownsMovement;
     private static UUID targetId;
     private static ClientLevel previousLevel;
-    private static KeyMapping toggleKey, selectKey, chaseKey, critKey, mineKey, modeKey, settingsKey, statsKey;
+    private static KeyMapping toggleKey, selectKey, chaseKey, critKey, mineKey, modeKey, settingsKey, statsKey, teleportKey;
+    private static String selectedPlayerName = "";
+    private static int lastTeleportRequestTick = -1000;
     private static UUID trackedVelocityTarget;
     private static Vec3 filteredVelocity = new Vec3(0.0, 0.0, 0.0);
     private static UUID observedHurtTarget;
@@ -71,7 +75,9 @@ public final class LockOnClient implements ClientModInitializer {
     private static int recoverySide = 1;
     // A connected sword contact offers a brief opportunity to use an
     // earlier sprint-knockback follow-up instead of waiting for full charge.
-    private static final float COMBO_ATTACK_CHARGE = 0.86f;
+    // Minecraft 26.3 sprint knockback requires >0.90 attack strength.
+    // Leave a margin and avoid weaker hits being rejected during immunity.
+    private static final float COMBO_ATTACK_CHARGE = 0.95f;
     private static final int COMBO_WINDOW_TICKS = 22;
     private static int sprintResetTicks;
     private static int navigationJumpUntil = -1;
@@ -90,6 +96,7 @@ public final class LockOnClient implements ClientModInitializer {
         modeKey = key("key.lockon.mode", InputConstants.KEY_K);
         settingsKey = key("key.lockon.settings", InputConstants.KEY_O);
         statsKey = key("key.lockon.stats", InputConstants.KEY_U);
+        teleportKey = key("key.lockon.teleport", InputConstants.KEY_V);
         ClientTickEvents.END_CLIENT_TICK.register(LockOnClient::tick);
         // Attack packets belong in client gameplay ticks, not in HUD render frames.
         // Rendering can run between vanilla movement packets, so a visual
@@ -107,6 +114,7 @@ public final class LockOnClient implements ClientModInitializer {
             previousLevel = mc.level;
             enabled = false;
             targetId = null;
+            selectedPlayerName = "";
             resetAttackSchedule();
             clearNavigation(mc);
             lastAttackedTarget = null;
@@ -132,13 +140,14 @@ public final class LockOnClient implements ClientModInitializer {
             mc.gui.setScreen(LockOnSettings.createScreen(mc.gui.screen()));
             return;
         }
+        while (teleportKey.consumeClick()) teleportToSelected(mc);
         while (statsKey.consumeClick()) {
             hint(mc, "Practice: " + attempts + " attack packets, "
                 + hurtSignals + " observed damage animations, "
                 + outOfRangeSkips + " unsafe reach attempts prevented. "
                 + (attempts >= 5 && hurtSignals == 0
-                    ? "No damage observed! Check PvP, permissions and safe-zone plugins."
-                    : "Crit particles do not prove damage."));
+                    ? "No damage observed: test manual hits, PvP and server plugins."
+                    : "Normal target immunity lasts about 10 ticks."));
         }
         while (toggleKey.consumeClick()) {
             enabled = !enabled;
@@ -153,6 +162,7 @@ public final class LockOnClient implements ClientModInitializer {
         while (selectKey.consumeClick()) {
             if (targetId != null) {
                 targetId = null;
+                selectedPlayerName = "";
                 resetTracking();
                 resetAttackSchedule();
                 lastAttackTick = -1000;
@@ -179,7 +189,7 @@ public final class LockOnClient implements ClientModInitializer {
         while (modeKey.consumeClick()) {
             precisionMode = !precisionMode;
             resetAttackSchedule();
-            hint(mc, "Combat: " + (precisionMode ? "PRECISION (full charge)" : "COMBO (86% follow-ups)"));
+            hint(mc, "Combat: " + (precisionMode ? "PRECISION (full charge)" : "COMBO (95% charge, damage-safe spacing)"));
         }
 
         if (!enabled || targetId == null || !me.isAlive() || me.isSpectator()) {
@@ -238,6 +248,7 @@ public final class LockOnClient implements ClientModInitializer {
         while (modeKey.consumeClick()) {}
         while (settingsKey.consumeClick()) {}
         while (statsKey.consumeClick()) {}
+        while (teleportKey.consumeClick()) {}
     }
 
     private static void resetTracking() {
@@ -334,7 +345,8 @@ public final class LockOnClient implements ClientModInitializer {
         return chase && !precisionMode && lastAttackedTarget != null
             && lastAttackedTarget.equals(target.getUUID())
             && elapsed >= 0 && elapsed <= COMBO_WINDOW_TICKS
-            && ticks - lastHurtSignalTick <= COMBO_WINDOW_TICKS
+            // Don't require a remote hurt-animation event. Those are
+            // observational signals and can be missed over the network.
             && me.distanceTo(target) <= 4.6;
     }
 
@@ -349,14 +361,16 @@ public final class LockOnClient implements ClientModInitializer {
             resetAttackSchedule();
             return;
         }
-        // Sprint-knockback and crits in Java require about 84.8% charge.
-        // Aim slightly higher (86%) to favor quick combos without producing
-        // a stream of weak hits. Outside a recent combo, wait for full charge.
+        // The 26.3 server needs >90% charge for sprint knockback; keep
+        // combo follow-ups at 95%. Fully charged openers maximize damage.
+        // Both sword and bare fist attacks must also respect the target's
+        // roughly 10-tick damage immunity to avoid non-damaging follow-ups.
         boolean combo = comboWindow(me, target);
         float requiredCharge = combo ? COMBO_ATTACK_CHARGE : 0.999f;
         int elapsed = ticks - lastAttackTick;
-        // Fists recharge substantially faster than swords; the shared 8-tick
-        // sword minimum would needlessly skip multiple bare-hand opportunities.
+        // Faster fist cooldown does not shorten the target's 10-tick
+        // post-damage immunity. Enforce 11 ticks between attacks at a single
+        // target for consistent damage and knockback rather than fake combos.
         int minimumTicks = CombatTactics.minimumAttackTicks(bareHand, combo);
         if (elapsed < minimumTicks
             || me.getAttackStrengthScale(0.0f) < requiredCharge) return;
@@ -374,11 +388,10 @@ public final class LockOnClient implements ClientModInitializer {
         }
         if (System.nanoTime() < meleeReadyNanos) return;
 
-        // Don't waste a follow-up on the opponent's visible damage
-        // invulnerability frames. Keep the attack ready rather than
-        // discarding its random deadline.
-        // Damage immunity comes from server state; do not overlap visible hits.
-        if (target.hurtTime > 0) return;
+        // The local hurtTime animation is NOT a trustworthy authoritative
+        // server cooldown. It can remain stale or be restarted by other
+        // damage sources. Use the 11-tick interval above, not a potentially
+        // permanent animation-based attack lockout.
 
         // Keep the attack ready when just outside reach; hit immediately
         // on re-entry. Still enforce line of sight and actual hitbox aim.
@@ -510,6 +523,25 @@ public final class LockOnClient implements ClientModInitializer {
                 me.setSprinting(false);
                 sprintResetTicks--;
             } else if (plan.sprint() && !me.isSprinting()) {
+                me.setSprinting(true);
+            }
+            return;
+        }
+
+        // Immediately pursue knockback across safe, visible terrain.
+        // Earlier versions handed control to A* as soon as d exceeded 3.05,
+        // allowing the victim to escape beyond actual attack reach.
+        if (d < 8.0 && sameHeight && !oneBlockAhead
+            && me.hasLineOfSight(target)
+            && Navigator.safeForward(mc.level, me, dxToTarget, dzToTarget)) {
+            stopMining(mc);
+            nextStep = null;
+            boolean sprintNow = sprintResetTicks == 0 && me.onGround();
+            setMovement(mc, true, false, false, false, sprintNow);
+            if (sprintResetTicks > 0) {
+                me.setSprinting(false);
+                sprintResetTicks--;
+            } else if (sprintNow && !me.isSprinting()) {
                 me.setSprinting(true);
             }
             return;
@@ -696,6 +728,7 @@ public final class LockOnClient implements ClientModInitializer {
             hint(mc, "No player visible near the crosshair");
         } else {
             targetId = closest.getUUID();
+            selectedPlayerName = closest.getName().getString();
             resetTracking();
             lastAttackTick = -1000;
             lastAttackedTarget = null;
@@ -703,6 +736,26 @@ public final class LockOnClient implements ClientModInitializer {
             nextPlanAt = 0;
             hint(mc, "Target: " + closest.getName().getString());
         }
+    }
+
+    // Teleportation is server-authoritative. A plain /tp command works only
+    // when the server grants permissions; this cannot bypass permissions.
+    // O → Combat can specify a distant name. Blank uses the G-selected player.
+    private static void teleportToSelected(Minecraft mc) {
+        if (mc.player == null || mc.level == null) return;
+        if (ticks - lastTeleportRequestTick < 30) return;
+        String requested = LockOnSettings.teleportPlayerName().trim();
+        String playerName = requested.isEmpty() ? selectedPlayerName : requested;
+        if (!playerName.matches("[A-Za-z0-9_]{1,16}")) {
+            hint(mc, "Choose a player with G or enter their username in O > Combat.");
+            return;
+        }
+        lastTeleportRequestTick = ticks;
+        stopActions(mc);
+        resetAttackSchedule();
+        mc.player.connection.sendCommand("tp " + playerName);
+        hint(mc, "Requested /tp " + playerName
+            + " (requires server permission; check chat for the result)");
     }
 
     private static void hint(Minecraft mc, String text) {

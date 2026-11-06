@@ -6,5 +6,6 @@
   "key.lockon.mining": "LockOn: Hindernisse abbauen (zerstörend)",
   "key.lockon.mode": "LockOn: Präzision/Combo-Modus",
   "key.lockon.settings": "LockOn: Einstellungen öffnen",
-  "key.lockon.stats": "LockOn: PvP-Trainingsstatistik"
+  "key.lockon.stats": "LockOn: PvP-Trainingsstatistik",
+  "key.lockon.teleport": "LockOn: zum Spieler teleportieren (Serverberechtigung erforderlich)"
 }

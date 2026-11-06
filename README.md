@@ -1,60 +1,56 @@
-# LockOn v2.4.0 — Minecraft Java 26.3 / Fabric
+# LockOn v2.5.0 — Minecraft Java 26.3 / Fabric
 
-A client-side combat practice mod with optional tracers. Intended for private worlds or servers where the owner and participants consent. Requires Java 25, Fabric Loader 0.20.1, Fabric API 0.165.2+26.3, and Cloth Config 26.3.159.
+Client-side PvP training assistant with optional tracers. Requires Minecraft 26.3, Java 25, Fabric Loader 0.20.1, Fabric API 0.165.2+26.3 and Cloth Config 26.3.159. Use only with the server owner's and other players' agreement.
 
-## Searching the *whole server*
+## Fixed: first sword/fist hit works, follow-ups do not
 
-**A client-only mod cannot discover players or blocks in chunks that the multiplayer server has not sent it.** Selecting `inf` removes LockOn's own range limit, but does not grant access to the server's full world. There is no legitimate purely client-side setting that overrides this.
+Previously, the mod allowed **8-tick sword follow-ups** (and **3-tick fist follow-ups**) even though vanilla damage immunity typically lasts **10 game ticks** after a successful hit. Those early follow-up attacks could show swings or critical-hit particles without new damage or knockback.
 
-### New in v2.4.0: administrator-exported world-wide block markers
+v2.5.0 changes:
 
-For **a server you administer**, v2.4.0 includes a standard-library Python exporter that reads **saved Anvil region files** and produces an index of saved chest, bed, and selected custom-block locations across the explored server map. The client can draw their tracer directions even when the original chunks are no longer loaded.
+- **At least 11 ticks between attacks on the same target**, with both fists and swords. The selected weapon must also meet its actual attack cooldown threshold. The randomized **20–50 ms additional delay** remains. This favors damaging follow-ups over ineffective early attacks.
+- **Combo mode targets 95% attack cooldown** rather than the earlier 86%, leaving a margin above the Minecraft 26.3 sprint-knockback threshold of 90%. Openers still prefer full charge.
+- **No animation-based permanent lockout:** removed the strict `target.hurtTime > 0` condition that could postpone subsequent hits when remote animation state lagged. The 11-tick minimum replaces it.
+- **No required hurt-animation signal to continue the combo:** the client may miss these signals; they are diagnostics, not a prerequisite.
+- **Better pursuit:** across safe, visible flat ground, chase now closes gaps up to 8 blocks without pausing to wait for A* pathfinding after knockback.
+- **Crit jumping is OFF by default** to make ordinary hits easier to verify. Press J to opt into timed critical-hit attempts after regular hits work.
 
-**Server administrator procedure** (requires access to server files and permission to inspect/share the map):
+Server PvP permissions, claim/region protection, anti-cheat checks, per-target immunity, knockback resistance and ping still determine whether hits succeed. A critical-hit effect is not proof of server damage.
 
-1. Stop the server, or use a consistent backup of its save directory.
-2. From the cloned GitHub repository, run Python 3 against the saved world directory:
-   ```bash
-   python3 tools/export_server_world.py /path/to/server/world --output lockon-server-index.tsv --block minecraft:diamond_ore
-   ```
-   The optional `--block` flag is repeatable for additional custom blocks; chests and beds are indexed automatically. For a normal vanilla world, the exporter scans `region/`, `DIM-1/region/`, `DIM1/region/`, and namespaced `dimensions/.../region/` save directories. Servers such as Paper may store dimensions in separate world directories; export those separately if needed.
-3. Copy `lockon-server-index.tsv` to your **Modrinth instance's** `config/lockon-server-index.tsv`.
-4. In Minecraft, press **O → Tracers**, switch on **Administrator world index (saved blocks, requires TSV export)** and individually enable **Chests**, **Beds**, and/or **Custom blocks**. Enable **Unlimited tracer distance** as well, then save.
-5. Imported markers update from the TSV file periodically. Re-export after significant world changes.
+## NEW: Teleport to a player (V)
 
-**Important limitations:** This index is a read-only *snapshot*, not live surveillance. It does **not** reveal real-time positions of players or moving mobs anywhere in the server. Obtaining those from beyond entity tracking distance would require an explicit, authorized server-side live-data integration. It does not search unexplored/generated-on-demand chunks, other people's files, or any inaccessible server. Some alternative region compression formats (for example LZ4) may not be processed by the standard-library exporter. Sharing the index exposes saved structure locations, so treat the file as administrator-controlled data.
+- **Press G** while looking toward a nearby player to select them; then press **V** to request `/tp <selected-player>`.
+- Alternatively, open **O → Combat**, enter a **Teleport username** (for example `Steve`), save, and press **V**. The entered name takes priority. Clear the field to return to the G-selected target.
+- LockOn does not need to be enabled to request teleportation. The key stops automatic movement and sends the normal Minecraft `/tp` command; it does not alter your local position.
+- **Requires Java Edition operator permission level 2 or the server's explicit command permission.** A normal player on an unmodified multiplayer server cannot teleport to another player by installing a client-only mod. If the command is denied, Minecraft reports that in chat.
+- Only actual Minecraft player usernames are accepted (letters, numbers, underscore; maximum 16 characters). Repeated key presses have a short cooldown.
 
-### Performance and capabilities
+## Features retained
 
-- The importer accepts a maximum of **200,000 saved-world markers** from an index file up to **32 MB**.
-- It projects the **900 nearest matching imported markers** per screen refresh to avoid rendering enormous numbers of lines.
-- Existing client-streamed markers still appear separately using the original chunk scanner.
-- All categories remain individually toggleable, including players (red), chests (gold), beds (blue), and configurable blocks/entities (purple/green).
-- The existing `inf` mode traces **client-loaded players and mobs without a mod distance cap**. The optional saved-world index extends **static block** coverage only.
-- Imported markers match the current Minecraft dimension. They do not automatically identify which multiplayer server the index came from. Enable the imported index only in the matching server/profile.
+- **O → Tracers:** separate players/chests/beds/custom block/custom entity toggles, loaded-chunk `inf` mode, optional admin-exported saved-world block index for a server you administer.
+- **Sword + empty-hand combat**, bow aim assist (bow manually fired), smart chase and 1-block obstacle climbing.
+- **O → Combat:** vanilla Survival melee attempted reach 2.5–3.0 blocks (default 3.0).
+- **U:** attack attempts, observed hurt animations and conservative out-of-reach checks.
+- Optional obstacle mining remains OFF by default.
 
-## Combat and movement retained
-
-- Vanilla Survival sword/fist reach setting **2.5–3.0 blocks** (3.0 default); no bypass of server validation.
-- Sword and empty-fist combat, 86%-charged follow-ups when a recent hurt animation is observed, full-charge normal hits, 20–50 ms randomized wait checked on game ticks, optional timed crits, sprint chase.
-- A* route finding, one-block step jumps, opt-in block mining (off by default), predictive bow aim (manual draw/fire).
-- **U** displays attempted packets and observed damage animations. Client-side crit particles do **not** prove the server accepted a hit.
-
-## Controls
+## Keys
 
 | Key | Action |
 |---|---|
-| R | Toggle combat LockOn |
-| G | Select / clear target |
-| H | Chase / strafe |
-| J | Jump-crit attempts |
+| R | Toggle combat lock-on |
+| G | Select/clear target |
+| H | Smart chase |
+| J | Toggle critical jumps (OFF by default) |
 | K | Combo / Precision |
-| B | Optional obstacle breaking (off by default) |
-| **O** | Settings: tracer categories, `inf`, admin world index |
-| U | Practice diagnostics |
+| B | Opt into destructive obstacle breaking (OFF by default) |
+| O | Settings (teleport username, reach, tracers) |
+| U | Combat diagnostics |
+| **V** | **Request server-authorized /tp to chosen player** |
 
-## Install
+## Installation
 
-Remove older LockOn JARs from your Modrinth instance's `mods/` folder. After the [GitHub Actions build and tests](https://github.com/Johnrumder-lang/123fixess/actions/workflows/build.yml) pass, install **`LockOn-26.3-v2.4.0.jar`** alongside compatible Fabric API and Cloth Config.
+After the [GitHub Actions build and tests](https://github.com/Johnrumder-lang/123fixess/actions/workflows/build.yml) pass, remove any earlier LockOn JARs from `mods/` and install `LockOn-26.3-v2.5.0.jar` in your Fabric 26.3 Modrinth instance. Keep compatible Fabric API and Cloth Config installed.
 
-A successful compilation and automated scanner tests do not substitute for testing the imported markers inside Minecraft. Use only when the server administrator has explicitly authorized access to the world index.
+### Test reliable combat first
+
+With a consenting opponent, test normal manual melee first. Then use LockOn with **J OFF**, stand within 2.5 blocks, select the target using G, and enable using R. Inspect the **U** diagnostics after several hits. If manual melee hits don't work either, check the server's PvP setting and claim/arena protections. Compiling and running deterministic tests alone cannot prove server-side damage and knockback.
