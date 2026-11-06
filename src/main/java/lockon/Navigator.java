@@ -114,7 +114,7 @@ final class Navigator {
         if (length < 0.01) return false;
         dx /= length;
         dz /= length;
-        for (double distance : new double[] {0.62, 0.92}) {
+        for (double distance : new double[] {0.42, 0.66, 0.92}) {
             BlockPos ahead = BlockPos.containing(
                 player.getX() + dx * distance,
                 player.getY() + 0.09,
@@ -126,6 +126,21 @@ final class Navigator {
                 && passable(level, ahead.above(2))) return true;
         }
         return false;
+    }
+
+    /**
+     * A small look-ahead prevents the direct chase from walking off a ledge.
+     * Navigation jumps and pathfinding handle higher obstacles separately.
+     */
+    static boolean safeForward(ClientLevel level, LocalPlayer player, double dx, double dz) {
+        double length = Math.hypot(dx, dz);
+        if (length < 0.01) return false;
+        BlockPos ahead = BlockPos.containing(
+            player.getX() + (dx / length) * 0.76,
+            player.getY() + 0.08,
+            player.getZ() + (dz / length) * 0.76);
+        return passable(level, ahead) && passable(level, ahead.above())
+            && supports(level, ahead.below());
     }
 
     static boolean safeToJump(ClientLevel level, LocalPlayer player) {

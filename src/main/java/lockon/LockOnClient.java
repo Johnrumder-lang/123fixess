@@ -41,17 +41,23 @@ public final class LockOnClient implements ClientModInitializer {
     private static boolean enabled;
     private static boolean chase = true;
     private static boolean criticals = true;
+    private static boolean precisionMode = false; // K toggles full-charge-only attacks
     // Destructive behavior is opt-in by pressing B.
     private static boolean mining = false;
     private static boolean ownsMovement;
     private static UUID targetId;
     private static ClientLevel previousLevel;
-    private static KeyMapping toggleKey, selectKey, chaseKey, critKey, mineKey;
+    private static KeyMapping toggleKey, selectKey, chaseKey, critKey, mineKey, modeKey;
     private static int ticks;
     private static int nextPlanAt;
     private static int nextCritJumpAt;
     private static int lastCritJumpTick = -1000;
     private static int lastAttackTick = -1000;
+    private static UUID lastAttackedTarget;
+    private static Vec3 lastMovementSample;
+    private static int lastMovementSampleTick;
+    private static int recoveryUntilTick;
+    private static int recoverySide = 1;
     // A connected sword contact offers a brief opportunity to use an
     // earlier sprint-knockback follow-up instead of waiting for full charge.
     private static final float COMBO_ATTACK_CHARGE = 0.86f;
@@ -69,6 +75,7 @@ public final class LockOnClient implements ClientModInitializer {
         chaseKey = key("key.lockon.movement", InputConstants.KEY_H);
         critKey = key("key.lockon.criticals", InputConstants.KEY_J);
         mineKey = key("key.lockon.mining", InputConstants.KEY_B);
+        modeKey = key("key.lockon.mode", InputConstants.KEY_K);
         ClientTickEvents.END_CLIENT_TICK.register(LockOnClient::tick);
         // Rendering runs between client ticks, letting us check the 20-50ms
         // deadline more often than Minecraft's normal 50ms gameplay tick.
@@ -98,6 +105,7 @@ public final class LockOnClient implements ClientModInitializer {
             targetId = null;
             resetAttackSchedule();
             clearNavigation(mc);
+            lastAttackedTarget = null;
         }
         LocalPlayer me = mc.player;
         if (me == null || mc.level == null || mc.gui.screen() != null) {
@@ -108,13 +116,20 @@ public final class LockOnClient implements ClientModInitializer {
 
         while (toggleKey.consumeClick()) {
             enabled = !enabled;
-            if (!enabled) { stopActions(mc); resetAttackSchedule(); }
+            if (!enabled) {
+                stopActions(mc);
+                resetAttackSchedule();
+                lastAttackTick = -1000;
+                lastAttackedTarget = null;
+            }
             hint(mc, "LockOn " + (enabled ? "ON" : "OFF"));
         }
         while (selectKey.consumeClick()) {
             if (targetId != null) {
                 targetId = null;
                 resetAttackSchedule();
+                lastAttackTick = -1000;
+                lastAttackedTarget = null;
                 stopActions(mc);
                 hint(mc, "Target cleared");
             } else selectTarget(mc);
@@ -133,6 +148,11 @@ public final class LockOnClient implements ClientModInitializer {
             if (!mining) stopMining(mc);
             nextPlanAt = 0;
             hint(mc, "Break obstacles " + (mining ? "ON" : "OFF"));
+        }
+        while (modeKey.consumeClick()) {
+            precisionMode = !precisionMode;
+            resetAttackSchedule();
+            hint(mc, "Combat: " + (precisionMode ? "PRECISION (full charge)" : "COMBO (86% follow-ups)"));
         }
 
         if (!enabled || targetId == null || !me.isAlive() || me.isSpectator()) {
@@ -162,6 +182,7 @@ public final class LockOnClient implements ClientModInitializer {
 
         aimAt(me, target);
         if (chase && !me.isPassenger() && !me.isFallFlying() && !me.isInWater()) {
+            updateStuckRecovery(me, target);
             chaseTarget(mc, me, target);
         } else {
             stopMining(mc);
@@ -176,6 +197,7 @@ public final class LockOnClient implements ClientModInitializer {
         while (chaseKey.consumeClick()) {}
         while (critKey.consumeClick()) {}
         while (mineKey.consumeClick()) {}
+        while (modeKey.consumeClick()) {}
     }
 
     private static void aimAt(LocalPlayer me, Player target) {
@@ -234,7 +256,9 @@ public final class LockOnClient implements ClientModInitializer {
 
     private static boolean comboWindow(LocalPlayer me, Player target) {
         int elapsed = ticks - lastAttackTick;
-        return chase && elapsed >= 0 && elapsed <= COMBO_WINDOW_TICKS
+        return chase && !precisionMode && lastAttackedTarget != null
+            && lastAttackedTarget.equals(target.getUUID())
+            && elapsed >= 0 && elapsed <= COMBO_WINDOW_TICKS
             && me.distanceTo(target) <= 4.6;
     }
 
@@ -265,6 +289,11 @@ public final class LockOnClient implements ClientModInitializer {
                 + ThreadLocalRandom.current().nextLong(20_000_000L, 50_000_001L);
         }
         if (System.nanoTime() < meleeReadyNanos) return;
+
+        // Don't waste a follow-up on the opponent's visible damage
+        // invulnerability frames. Keep the attack ready rather than
+        // discarding its random deadline.
+        if (combo && target.hurtTime > 2) return;
 
         // Keep the attack ready when just outside reach; hit immediately
         // on re-entry. Still enforce line of sight and actual hitbox aim.
@@ -306,18 +335,30 @@ public final class LockOnClient implements ClientModInitializer {
         mc.gameMode.attack(me, target);
         me.swing(InteractionHand.MAIN_HAND, me.getMainHandItem().getAttackAnimation(), false);
         lastAttackTick = ticks;
+        lastAttackedTarget = target.getUUID();
         resetAttackSchedule();
 
-        // Vanilla cancels sprint on a successful sprint-knockback attack.
-        // Explicitly release it for one movement tick, then reacquire
-        // forward sprint on the next chase tick for a second knockback hit.
-        if (chase) {
-            me.setSprinting(false);
-            releaseSprint(mc);
-            sprintResetTicks = 1;
-        } else {
-            sprintResetTicks = 0;
+        // Reset sprint on NEXT movement tick, not immediately after sending
+        // the hit. Keep forward input active so knockback isn't followed by
+        // a full stop; sprint is reacquired after a short off interval.
+        sprintResetTicks = chase ? 1 : 0;
+    }
+
+    private static void updateStuckRecovery(LocalPlayer me, Player target) {
+        if (ticks - lastMovementSampleTick < 12) return;
+        if (lastMovementSample != null && ownsMovement && miningPos == null
+            && me.onGround() && me.distanceTo(target) > 3.3) {
+            double moved = Math.hypot(me.getX() - lastMovementSample.x,
+                me.getZ() - lastMovementSample.z);
+            if (moved < 0.14) {
+                recoveryUntilTick = ticks + 8;
+                recoverySide = -recoverySide;
+                nextStep = null;
+                nextPlanAt = 0;
+            }
         }
+        lastMovementSample = me.position();
+        lastMovementSampleTick = ticks;
     }
 
     private static void chaseTarget(Minecraft mc, LocalPlayer me, Player target) {
@@ -328,6 +369,17 @@ public final class LockOnClient implements ClientModInitializer {
         double dzToTarget = target.getZ() - me.getZ();
         boolean oneBlockAhead = Navigator.oneBlockAhead(mc.level, me, dxToTarget, dzToTarget);
         boolean sameHeight = Math.abs(target.getY() - me.getY()) < 0.58;
+        if (ticks < recoveryUntilTick && !oneBlockAhead && d > 3.0) {
+            boolean left = recoverySide < 0;
+            double yaw = Math.toRadians(me.getYRot());
+            boolean safeSide = safeSide(mc.level, me,
+                left ? -Math.cos(yaw) : Math.cos(yaw),
+                left ? -Math.sin(yaw) : Math.sin(yaw));
+            boolean safeForward = Navigator.safeForward(mc.level, me, dxToTarget, dzToTarget);
+            setMovement(mc, safeForward, false, safeSide && left,
+                safeSide && !left, safeForward);
+            return;
+        }
         if (d < 3.05 && sameHeight && !oneBlockAhead && me.hasLineOfSight(target)) {
             stopMining(mc);
             nextStep = null;
@@ -344,18 +396,23 @@ public final class LockOnClient implements ClientModInitializer {
             // For a combo, prioritize forward momentum instead of side
             // strafing: closing on knockback is what maintains pressure.
             boolean combo = comboWindow(me, target);
-            boolean forward = d > (combo || airborneOpponent ? 1.65 : 2.22)
-                && sprintResetTicks == 0;
+            boolean forward = d > (combo || airborneOpponent ? 1.65 : 2.15)
+                && Navigator.safeForward(mc.level, me, dxToTarget, dzToTarget);
             boolean back = !combo && !airborneOpponent && d < 1.30;
             boolean orbit = !combo && d < 2.6 && !forward
                 && (left ? leftSafe : rightSafe);
             boolean inCritWindow = ticks - lastCritJumpTick <= 8 && !me.onGround();
-            boolean sprintNow = forward && me.onGround() && !inCritWindow;
+            boolean sprintNow = forward && sprintResetTicks == 0
+                && me.onGround() && !inCritWindow;
             setMovement(mc, forward, back, orbit && left, orbit && !left, sprintNow);
-            // Sprint state must transition false -> true between knockback
-            // contacts; merely holding the key may not reset it in time.
-            if (sprintNow && !me.isSprinting()) me.setSprinting(true);
-            if (sprintResetTicks > 0) sprintResetTicks--;
+            // Force a real sprint off -> on transition. Forward motion
+            // remains pressed while sprint is reset for the next hit.
+            if (sprintResetTicks > 0) {
+                me.setSprinting(false);
+                sprintResetTicks--;
+            } else if (sprintNow && !me.isSprinting()) {
+                me.setSprinting(true);
+            }
             return;
         }
 
@@ -376,7 +433,17 @@ public final class LockOnClient implements ClientModInitializer {
         }
         if (nextStep == null) {
             stopMining(mc);
-            releaseMovement(mc);
+            // If bounded A* cannot find a waypoint, do not freeze on flat
+            // terrain. Fall back to safe direct pursuit when supported.
+            if (d > 3.05 && Navigator.safeForward(mc.level, me, dxToTarget, dzToTarget)) {
+                setMovement(mc, true, false, false, false, sprintResetTicks == 0);
+            } else {
+                releaseMovement(mc);
+            }
+            if (sprintResetTicks > 0) {
+                me.setSprinting(false);
+                sprintResetTicks--;
+            }
             return;
         }
 
@@ -412,10 +479,16 @@ public final class LockOnClient implements ClientModInitializer {
         boolean shouldJump = goal.getY() > me.getY() + 0.48
             || Navigator.oneBlockAhead(mc.level, me, x, z);
         if (shouldJump) requestNavigationJump(mc, me);
-        setMovement(mc, forward > 0.25 && sprintResetTicks == 0,
-            forward < -0.35, strafe < -0.35, strafe > 0.35,
-            forward > 0.60 && sprintResetTicks == 0);
-        if (sprintResetTicks > 0) sprintResetTicks--;
+        boolean moveForward = forward > 0.25;
+        boolean sprintNow = forward > 0.60 && sprintResetTicks == 0;
+        setMovement(mc, moveForward, forward < -0.35,
+            strafe < -0.35, strafe > 0.35, sprintNow);
+        if (sprintResetTicks > 0) {
+            me.setSprinting(false);
+            sprintResetTicks--;
+        } else if (sprintNow && me.onGround() && !me.isSprinting()) {
+            me.setSprinting(true);
+        }
     }
 
     private static boolean safeSide(ClientLevel level, LocalPlayer me, double dx, double dz) {
@@ -491,6 +564,10 @@ public final class LockOnClient implements ClientModInitializer {
         nextPlanAt = 0;
         sprintResetTicks = 0;
         lastAttackTick = -1000;
+        lastAttackedTarget = null;
+        lastMovementSample = null;
+        lastMovementSampleTick = 0;
+        recoveryUntilTick = 0;
         navigationJumpUntil = -1;
         lastNavigationJumpTick = -1000;
     }
@@ -519,6 +596,8 @@ public final class LockOnClient implements ClientModInitializer {
             hint(mc, "No player visible near the crosshair");
         } else {
             targetId = closest.getUUID();
+            lastAttackTick = -1000;
+            lastAttackedTarget = null;
             resetAttackSchedule();
             nextPlanAt = 0;
             hint(mc, "Target: " + closest.getName().getString());

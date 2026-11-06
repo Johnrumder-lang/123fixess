@@ -3,7 +3,7 @@
   "id": "lockon",
   "version": "${version}",
   "name": "LockOn",
-  "description": "Private-server PvP lock-on, sword attacks only at full cooldown.",
+  "description": "Client-side practice LockOn with adaptive combos, bow assist and smart movement.",
   "environment": "client",
   "entrypoints": {"client": ["lockon.LockOnClient"]},
   "depends": {
