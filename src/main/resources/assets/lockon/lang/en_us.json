@@ -5,5 +5,6 @@
   "key.lockon.criticals": "LockOn: timed jump criticals",
   "key.lockon.mining": "LockOn: allow breaking obstacles (destructive)",
   "key.lockon.mode": "LockOn: precision/combo attack mode",
-  "key.lockon.settings": "LockOn: open settings"
+  "key.lockon.settings": "LockOn: open settings",
+  "key.lockon.stats": "LockOn: combat practice statistics"
 }
