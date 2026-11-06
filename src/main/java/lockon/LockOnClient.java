@@ -7,8 +7,6 @@ import net.minecraft.world.item.Items;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.keymapping.v1.KeyMappingHelper;
-import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
-import net.minecraft.resources.Identifier;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
@@ -54,6 +52,7 @@ public final class LockOnClient implements ClientModInitializer {
     private static int lastObservedHurtTime = -1;
     private static int attempts;
     private static int hurtSignals;
+    private static int outOfRangeSkips;
     private static int streak;
     private static int bestStreak;
     private static int lastHurtSignalTick = -1000;
@@ -92,19 +91,9 @@ public final class LockOnClient implements ClientModInitializer {
         settingsKey = key("key.lockon.settings", InputConstants.KEY_O);
         statsKey = key("key.lockon.stats", InputConstants.KEY_U);
         ClientTickEvents.END_CLIENT_TICK.register(LockOnClient::tick);
-        // Rendering runs between client ticks, letting us check the 20-50ms
-        // deadline more often than Minecraft's normal 50ms gameplay tick.
-        HudElementRegistry.addLast(Identifier.fromNamespaceAndPath("lockon", "attack_timing"), (graphics, deltaTracker) -> {
-            Minecraft mc = Minecraft.getInstance();
-            if (!enabled || targetId == null || mc.level == null || mc.player == null
-                || mc.gui.screen() != null || !mc.player.isAlive()) return;
-            if (mc.player.getMainHandItem().is(Items.BOW)) return;
-            Player target = mc.level.getPlayerByUUID(targetId);
-            if (target != null && target.isAlive() && !target.isSpectator()
-                && mc.player.distanceTo(target) <= TARGET_RANGE) {
-                attack(mc, mc.player, target);
-            }
-        });
+        // Attack packets belong in client gameplay ticks, not in HUD render frames.
+        // Rendering can run between vanilla movement packets, so a visual
+        // crit effect is not evidence of a server-side hit.
     }
 
     private static KeyMapping key(String name, int code) {
@@ -125,6 +114,7 @@ public final class LockOnClient implements ClientModInitializer {
             resetTracking();
             attempts = 0;
             hurtSignals = 0;
+            outOfRangeSkips = 0;
             streak = 0;
             bestStreak = 0;
             lastHurtSignalTick = -1000;
@@ -143,9 +133,12 @@ public final class LockOnClient implements ClientModInitializer {
             return;
         }
         while (statsKey.consumeClick()) {
-            hint(mc, "Combat practice: " + attempts + " attacks, "
-                + hurtSignals + " observed hurt animations, streak "
-                + streak + " (best " + bestStreak + ")");
+            hint(mc, "Practice: " + attempts + " attack packets, "
+                + hurtSignals + " observed damage animations, "
+                + outOfRangeSkips + " unsafe reach attempts prevented. "
+                + (attempts >= 5 && hurtSignals == 0
+                    ? "No damage observed! Check PvP, permissions and safe-zone plugins."
+                    : "Crit particles do not prove damage."));
         }
         while (toggleKey.consumeClick()) {
             enabled = !enabled;
@@ -272,7 +265,7 @@ public final class LockOnClient implements ClientModInitializer {
             // These are observations, NOT server-verified hit confirmations.
             // Another attacker or environmental damage can also cause them.
             if (target.hurtTime > lastObservedHurtTime
-                && ticks - lastAttackTick <= 8 && lastAttackTick >= 0) {
+                && ticks - lastAttackTick <= 24 && lastAttackTick >= 0) {
                 hurtSignals++;
                 streak = ticks - lastHurtSignalTick <= 26 ? streak + 1 : 1;
                 bestStreak = Math.max(bestStreak, streak);
@@ -341,6 +334,7 @@ public final class LockOnClient implements ClientModInitializer {
         return chase && !precisionMode && lastAttackedTarget != null
             && lastAttackedTarget.equals(target.getUUID())
             && elapsed >= 0 && elapsed <= COMBO_WINDOW_TICKS
+            && ticks - lastHurtSignalTick <= COMBO_WINDOW_TICKS
             && me.distanceTo(target) <= 4.6;
     }
 
@@ -383,14 +377,26 @@ public final class LockOnClient implements ClientModInitializer {
         // Don't waste a follow-up on the opponent's visible damage
         // invulnerability frames. Keep the attack ready rather than
         // discarding its random deadline.
-        if (combo && target.hurtTime > 2) return;
+        // Damage immunity comes from server state; do not overlap visible hits.
+        if (target.hurtTime > 0) return;
 
         // Keep the attack ready when just outside reach; hit immediately
         // on re-entry. Still enforce line of sight and actual hitbox aim.
         Vec3 eye = me.getEyePosition();
-        Vec3 ray = eye.add(me.getViewVector(1.0f).scale(attackReach()));
-        if (!me.hasLineOfSight(target)
-            || target.getBoundingBox().inflate(0.08).clip(eye, ray).isEmpty()) return;
+        // Real server hits require a valid reach to the actual hitbox, not
+        // merely the target's center or an inflated visual bounding box.
+        var box = target.getBoundingBox();
+        double nx = Mth.clamp(eye.x, box.minX, box.maxX);
+        double ny = Mth.clamp(eye.y, box.minY, box.maxY);
+        double nz = Mth.clamp(eye.z, box.minZ, box.maxZ);
+        double ex = eye.x - nx, ey = eye.y - ny, ez = eye.z - nz;
+        double safeReach = Math.max(0.0, attackReach() - 0.08);
+        if (ex * ex + ey * ey + ez * ez > safeReach * safeReach) {
+            outOfRangeSkips++;
+            return;
+        }
+        Vec3 ray = eye.add(me.getViewVector(1.0f).scale(safeReach));
+        if (!me.hasLineOfSight(target) || box.clip(eye, ray).isEmpty()) return;
 
         boolean falling = !me.onGround() && me.fallDistance > 0.0f
             && me.getDeltaMovement().y < -0.01
@@ -401,7 +407,10 @@ public final class LockOnClient implements ClientModInitializer {
         // worthwhile only if the opponent is grounded and nearly stationary.
         boolean standingInCritRange = me.distanceTo(target) < 2.20
             && Math.hypot(me.getDeltaMovement().x, me.getDeltaMovement().z) < 0.16;
-        if (criticals && !combo && !airborneOpponent
+        // Wait for a recent observed server hurt animation before initiating
+        // optional crit jumps. The 26.3 client can show false crit particles.
+        if (criticals && ticks - lastHurtSignalTick < 100
+            && !combo && !airborneOpponent
             && !me.isSprinting() && me.onGround() && mc.level != null
             && standingInCritRange && ticks >= nextCritJumpAt
             && Navigator.safeToJump(mc.level, me)) {
