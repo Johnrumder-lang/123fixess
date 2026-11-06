@@ -80,6 +80,7 @@ public final class LockOnClient implements ClientModInitializer {
 
     @Override public void onInitializeClient() {
         LockOnSettings.load();
+        LockOnTracers.initialize();
         toggleKey = key("key.lockon.toggle", InputConstants.KEY_R);
         selectKey = key("key.lockon.target", InputConstants.KEY_G);
         chaseKey = key("key.lockon.movement", InputConstants.KEY_H);

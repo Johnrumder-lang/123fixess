@@ -11,8 +11,8 @@ final class CombatTactics {
     private CombatTactics() {}
 
     static double normalizeReach(double reach) {
-        if (!Double.isFinite(reach)) return 5.0;
-        return Math.max(3.0, Math.min(5.0, reach));
+        if (!Double.isFinite(reach)) return 3.0;
+        return Math.max(2.5, Math.min(3.0, reach));
     }
 
     static double predictionTicks(double distance, double reach) {
