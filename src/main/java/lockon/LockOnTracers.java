@@ -29,8 +29,8 @@ public final class LockOnTracers {
     // Bound the amount of work each client tick and the number of lines
     // each frame, especially when "inf" is used in a dense world.
     private static final int BLOCK_SCAN_BATCH = 8000;
-    private static final int MAX_BLOCK_MARKERS = 600;
-    private static final int MAX_ENTITY_MARKERS = 300;
+    private static final int MAX_BLOCK_MARKERS = 1800;
+    private static final int MAX_ENTITY_MARKERS = 700;
     private static final int HEIGHT_RADIUS_FINITE = 12;
 
     private static final int COLOR_PLAYERS = 0xDFFF5555;
@@ -85,10 +85,12 @@ public final class LockOnTracers {
         scanningUnlimited = LockOnSettings.unlimitedTraceDistance();
         scanRadius = LockOnSettings.traceDistance();
 
-        // Infinite mode covers the client's configured view distance plus
-        // the normal edge padding, but never tries to load a missing chunk.
+        // "inf" means ALL nearby chunks already available to the client,
+        // not just the graphics render-distance setting. Server view and
+        // chunk streaming still determine what exists on the client.
+        // Querying hasChunk never forces missing chunks to download.
         int radiusChunks = scanningUnlimited
-            ? Math.max(2, Math.min(40, mc.options.renderDistance().get() + 2))
+            ? 48
             : (scanRadius + 15) / 16 + 1;
 
         List<ChunkPos> found = new ArrayList<>();
@@ -302,17 +304,27 @@ public final class LockOnTracers {
                                    double focal, Vec3 target, int color) {
         Vec3 relative = target.subtract(eye);
         double depth = relative.dot(forward);
-        // Screen-space overlay: targets behind the camera are not projected.
-        if (depth <= 0.05) return;
-
         int width = graphics.guiWidth();
         int height = graphics.guiHeight();
-        double ox = relative.dot(right) * focal / depth;
-        double oy = -relative.dot(up) * focal / depth;
-        if (!Double.isFinite(ox) || !Double.isFinite(oy)) return;
-
         double boundX = width * 0.47;
         double boundY = height * 0.47;
+        double ox, oy;
+        if (depth <= 0.05) {
+            // The old mod silently skipped every player/block behind you.
+            // Represent those targets by a screen-edge directional line.
+            // A target directly behind the camera points toward the bottom
+            // center; lateral targets point left/right across the bottom.
+            double side = relative.dot(right);
+            double elevation = relative.dot(up);
+            ox = Math.abs(side) < 0.01 ? 0.0
+                : Math.copySign(boundX, side);
+            oy = elevation > relative.length() * 0.5
+                ? -boundY : boundY;
+        } else {
+            ox = relative.dot(right) * focal / depth;
+            oy = -relative.dot(up) * focal / depth;
+        }
+        if (!Double.isFinite(ox) || !Double.isFinite(oy)) return;
         double scale = Math.min(1.0, Math.min(
             boundX / Math.max(Math.abs(ox), 0.001),
             boundY / Math.max(Math.abs(oy), 0.001)));
