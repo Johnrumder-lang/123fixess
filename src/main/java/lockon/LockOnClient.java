@@ -48,6 +48,8 @@ public final class LockOnClient implements ClientModInitializer {
     private static int lastCritJumpTick = -1000;
     private static int lastAttackTick = -1000;
     private static int sprintResetTicks;
+    private static int navigationJumpUntil = -1;
+    private static int lastNavigationJumpTick = -1000;
     private static Navigator.Step nextStep;
     private static BlockPos miningPos;
 
@@ -157,7 +159,9 @@ public final class LockOnClient implements ClientModInitializer {
         Vec3 eye = me.getEyePosition();
         double distance = me.distanceTo(target);
         Vec3 vel = target.getDeltaMovement();
-        double prediction = Mth.clamp(distance * 0.10, 0, 0.9);
+        // In actual melee range, center the ray INSIDE the hitbox.
+        // Predictive leading is only useful while approaching from a distance.
+        double prediction = distance < 3.8 ? 0.0 : Mth.clamp(distance * 0.10, 0, 0.9);
         Vec3 center = new Vec3(
             target.getX() + Mth.clamp(vel.x * prediction, -0.13, 0.13),
             target.getY() + target.getBbHeight() * 0.70,
@@ -206,50 +210,57 @@ public final class LockOnClient implements ClientModInitializer {
     }
 
     private static void attack(Minecraft mc, LocalPlayer me, Player target) {
-        if (mc.gameMode == null || me.isUsingItem() || !me.getMainHandItem().is(ItemTags.SWORDS)
-            || miningPos != null || ticks - lastAttackTick < 3) {
+        if (mc.gameMode == null || me.isUsingItem()
+            || !me.getMainHandItem().is(ItemTags.SWORDS) || miningPos != null) {
             resetAttackSchedule();
             return;
         }
-        // Ray is 3.1 blocks long; this does not enlarge Minecraft/server entity reach.
-        Vec3 eye = me.getEyePosition();
-        Vec3 ray = eye.add(me.getViewVector(1.0f).scale(ATTACK_REACH));
-        if (!me.hasLineOfSight(target)
-            || target.getBoundingBox().inflate(0.05).clip(eye, ray).isEmpty()
-            || me.getAttackStrengthScale(0.0f) < 0.999f) {
-            resetAttackSchedule();
+        if (ticks - lastAttackTick < 2 || me.getAttackStrengthScale(0.0f) < 0.999f) {
             return;
         }
 
-        // 20 TPS: random 2 or 3 tick pause (100-150 ms) once the
-        // actual sword cooldown is fully charged and target is hittable.
-        if (!target.getUUID().equals(scheduledTarget) || meleeReadyAt < 0) {
+        // Start a random 2-3 tick delay only once for a fully charged
+        // attack. Do NOT restart it every time the target briefly leaves
+        // the ray, or the bot can indefinitely refuse obvious hits.
+        if (scheduledTarget != null && !scheduledTarget.equals(target.getUUID())) {
+            resetAttackSchedule();
+        }
+        if (meleeReadyAt < 0) {
             scheduledTarget = target.getUUID();
             meleeReadyAt = ticks + 2 + ThreadLocalRandom.current().nextInt(2);
-            return;
         }
         if (ticks < meleeReadyAt) return;
+
+        // Keep the attack ready when just outside reach; hit immediately
+        // on re-entry. Still enforce line of sight and actual hitbox aim.
+        Vec3 eye = me.getEyePosition();
+        Vec3 ray = eye.add(me.getViewVector(1.0f).scale(ATTACK_REACH));
+        if (!me.hasLineOfSight(target)
+            || target.getBoundingBox().inflate(0.08).clip(eye, ray).isEmpty()) return;
 
         boolean falling = !me.onGround() && me.fallDistance > 0.0f
             && me.getDeltaMovement().y < -0.01
             && !me.isInWater() && !me.onClimbable() && !me.isPassenger();
-        // Airborne opponents need prompt combo follow-ups more than delayed crit hops.
-        boolean opponentAirborne = !target.onGround() || target.getDeltaMovement().y > 0.08;
-        boolean goodCritOpportunity = criticals && !opponentAirborne
-            && me.onGround() && mc.level != null
-            && me.distanceTo(target) < 2.65 && ticks >= nextCritJumpAt
-            && Navigator.safeToJump(mc.level, me);
+        boolean airborneOpponent = !target.onGround() || target.getDeltaMovement().y > 0.08;
 
-        if (goodCritOpportunity) {
+        // Prioritize immediate follow-up hits in a combo. A jump crit is
+        // worthwhile only if the opponent is grounded and nearly stationary.
+        boolean standingInCritRange = me.distanceTo(target) < 2.20
+            && Math.hypot(me.getDeltaMovement().x, me.getDeltaMovement().z) < 0.16;
+        if (criticals && !airborneOpponent && me.onGround() && mc.level != null
+            && standingInCritRange && ticks >= nextCritJumpAt
+            && Navigator.safeToJump(mc.level, me)) {
             me.setSprinting(false);
             releaseSprint(mc);
             me.jumpFromGround();
             lastCritJumpTick = ticks;
-            nextCritJumpAt = ticks + 18;
-            // Keep this same attack scheduled until the descending phase.
+            nextCritJumpAt = ticks + 22;
             return;
         }
-        if (criticals && !falling && ticks - lastCritJumpTick < 9) return;
+
+        // Allow a very short falling-crit window, then hit normally
+        // rather than holding a fully charged sword without attacking.
+        if (criticals && !falling && ticks - lastCritJumpTick < 6 && !airborneOpponent) return;
         if (falling && criticals) {
             me.setSprinting(false);
             releaseSprint(mc);
@@ -259,12 +270,18 @@ public final class LockOnClient implements ClientModInitializer {
         me.swing(InteractionHand.MAIN_HAND, me.getMainHandItem().getAttackAnimation(), false);
         lastAttackTick = ticks;
         resetAttackSchedule();
-        sprintResetTicks = opponentAirborne ? 1 : 2;
+        sprintResetTicks = airborneOpponent ? 1 : 2;
     }
 
     private static void chaseTarget(Minecraft mc, LocalPlayer me, Player target) {
         double d = horizontalDistance(me.getX(), me.getZ(), target.getX(), target.getZ());
-        if (d < 3.05 && me.hasLineOfSight(target)) {
+        // Do not switch to close-range strafing while the target is above a
+        // step or a solid 1-block obstacle still separates the two players.
+        double dxToTarget = target.getX() - me.getX();
+        double dzToTarget = target.getZ() - me.getZ();
+        boolean oneBlockAhead = Navigator.oneBlockAhead(mc.level, me, dxToTarget, dzToTarget);
+        boolean sameHeight = Math.abs(target.getY() - me.getY()) < 0.58;
+        if (d < 3.05 && sameHeight && !oneBlockAhead && me.hasLineOfSight(target)) {
             stopMining(mc);
             nextStep = null;
             // Small alternating orbit and measured backing off. Never chase into a hole.
@@ -272,16 +289,30 @@ public final class LockOnClient implements ClientModInitializer {
             double yaw = Math.toRadians(me.getYRot());
             double sideX = left ? -Math.cos(yaw) : Math.cos(yaw);
             double sideZ = left ? -Math.sin(yaw) : Math.sin(yaw);
-            if (!safeSide(mc.level, me, sideX, sideZ)) left = !left;
+            boolean leftSafe = safeSide(mc.level, me, -Math.cos(yaw), -Math.sin(yaw));
+            boolean rightSafe = safeSide(mc.level, me, Math.cos(yaw), Math.sin(yaw));
+            if (left && !leftSafe) left = false;
+            else if (!left && !rightSafe) left = true;
             boolean airborneOpponent = !target.onGround() || target.getDeltaMovement().y > 0.08;
-            // Stay close enough to follow knockback without walking directly into them.
-            boolean forward = d > (airborneOpponent ? 1.95 : 2.35) && sprintResetTicks == 0;
-            boolean back = !airborneOpponent && d < 1.40;
-            boolean inCritWindow = ticks - lastCritJumpTick <= 9 && !me.onGround();
-            // Sprint between contacts; disable it for the actual falling crit strike.
+            // Close the gap quickly after knockback; only orbit once genuinely inside range.
+            boolean forward = d > (airborneOpponent ? 1.82 : 2.22) && sprintResetTicks == 0;
+            boolean back = !airborneOpponent && d < 1.30;
+            boolean orbit = d < 2.6 && !forward && (left ? leftSafe : rightSafe);
+            boolean inCritWindow = ticks - lastCritJumpTick <= 8 && !me.onGround();
             boolean sprintNow = forward && me.onGround() && !inCritWindow;
-            setMovement(mc, forward, back, left, !left, sprintNow);
+            setMovement(mc, forward, back, orbit && left, orbit && !left, sprintNow);
             if (sprintResetTicks > 0) sprintResetTicks--;
+            return;
+        }
+
+        // Direct one-block step-up is faster and more reliable than recalculating
+        // a route every eight ticks at point-blank range. Jump into the obstacle.
+        if (oneBlockAhead && Navigator.safeToJump(mc.level, me)
+            && d < 5.0 && !me.isInWater()) {
+            stopMining(mc);
+            nextStep = null;
+            requestNavigationJump(mc, me);
+            setMovement(mc, true, false, false, false, me.onGround());
             return;
         }
 
@@ -324,12 +355,9 @@ public final class LockOnClient implements ClientModInitializer {
         double yaw = Math.toRadians(me.getYRot());
         double forward = x * -Math.sin(yaw) + z * Math.cos(yaw);
         double strafe = x * Math.cos(yaw) + z * Math.sin(yaw);
-        boolean shouldJump = goal.getY() > me.getY() + 0.48;
-        if (shouldJump && me.onGround() && ticks >= nextCritJumpAt
-            && Navigator.safeToJump(mc.level, me)) {
-            me.jumpFromGround();
-            nextCritJumpAt = ticks + 9;
-        }
+        boolean shouldJump = goal.getY() > me.getY() + 0.48
+            || Navigator.oneBlockAhead(mc.level, me, x, z);
+        if (shouldJump) requestNavigationJump(mc, me);
         setMovement(mc, forward > 0.25 && sprintResetTicks == 0,
             forward < -0.35, strafe < -0.35, strafe > 0.35,
             forward > 0.60 && sprintResetTicks == 0);
@@ -364,7 +392,16 @@ public final class LockOnClient implements ClientModInitializer {
         miningPos = null;
     }
 
+    private static void requestNavigationJump(Minecraft mc, LocalPlayer me) {
+        if (!me.onGround() || ticks - lastNavigationJumpTick < 11
+            || mc.level == null || !Navigator.safeToJump(mc.level, me)) return;
+        me.jumpFromGround();
+        lastNavigationJumpTick = ticks;
+        navigationJumpUntil = ticks + 3;
+    }
+
     private static void setMovement(Minecraft mc, boolean f, boolean b, boolean l, boolean r, boolean sprint) {
+        mc.options.keyJump.setDown(ticks <= navigationJumpUntil);
         mc.options.keyUp.setDown(f);
         mc.options.keyDown.setDown(b);
         mc.options.keyLeft.setDown(l);
@@ -384,6 +421,8 @@ public final class LockOnClient implements ClientModInitializer {
         mc.options.keyLeft.setDown(false);
         mc.options.keyRight.setDown(false);
         mc.options.keySprint.setDown(false);
+        mc.options.keyJump.setDown(false);
+        navigationJumpUntil = -1;
         ownsMovement = false;
     }
 
@@ -397,6 +436,8 @@ public final class LockOnClient implements ClientModInitializer {
         nextStep = null;
         nextPlanAt = 0;
         sprintResetTicks = 0;
+        navigationJumpUntil = -1;
+        lastNavigationJumpTick = -1000;
     }
 
     private static double horizontalDistance(double ax, double az, double bx, double bz) {

@@ -106,6 +106,28 @@ final class Navigator {
         return new Step(best.pos, best.digFoot, best.digHead);
     }
 
+    // Probe the immediate direction of movement at feet height.
+    // A solid block with clear space one and two blocks above it is
+    // a normal single-block obstacle and can be climbed by jumping.
+    static boolean oneBlockAhead(ClientLevel level, LocalPlayer player, double dx, double dz) {
+        double length = Math.hypot(dx, dz);
+        if (length < 0.01) return false;
+        dx /= length;
+        dz /= length;
+        for (double distance : new double[] {0.62, 0.92}) {
+            BlockPos ahead = BlockPos.containing(
+                player.getX() + dx * distance,
+                player.getY() + 0.09,
+                player.getZ() + dz * distance);
+            if (!passable(level, ahead)
+                && !level.getBlockState(ahead).getFluidState().isEmpty()) continue;
+            if (!passable(level, ahead)
+                && passable(level, ahead.above())
+                && passable(level, ahead.above(2))) return true;
+        }
+        return false;
+    }
+
     static boolean safeToJump(ClientLevel level, LocalPlayer player) {
         BlockPos feet = BlockPos.containing(player.getX(), player.getY() + 0.08, player.getZ());
         return supports(level, feet.below()) && passable(level, feet.above(2));
@@ -148,7 +170,9 @@ final class Navigator {
         // Stop near sword range, not at the opponent's exact location.
         double dx = at.getX() + 0.5 - x;
         double dz = at.getZ() + 0.5 - z;
-        double horizontal = Math.max(0, Math.sqrt(dx * dx + dz * dz) - 2.25);
+        // Pathfinding must still make progress around obstructions even when
+        // the opponent is horizontally within attack range but unreachable.
+        double horizontal = Math.max(0, Math.sqrt(dx * dx + dz * dz) - 0.95);
         return horizontal + Math.abs((at.getY()) - y) * 2.0;
     }
 }

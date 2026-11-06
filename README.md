@@ -1,24 +1,19 @@
-# LockOn 1.5.0 — Minecraft 26.3 / Fabric
+# LockOn 1.5.1 — Minecraft 26.3 / Fabric
 
-Private, consenting PvP testing server only. Client-side Fabric mod with Java 25, Fabric Loader 0.20.1, Fabric API 0.165.2+26.3.
+Client-side LockOn for consenting tests on a private PvP server. Needs Java 25, Fabric Loader and compatible Fabric API.
 
-## New in v1.5.0
-- **Melee ray range: 3.1 blocks** (was 3.0). This is only a client aim/attack test; a normal vanilla or Paper server may reject hits that exceed its actual reach limit.
-- **Random attack timing:** once the sword's **normal full cooldown** completes and a target is in reach, schedule the hit **2 or 3 game ticks later** (approximately 100–150 ms at 20 TPS). This is an extra delay, **not** 7–10 fully powered sword attacks per second.
-- **Improved air-combo pursuit:** follows opponents briefly airborne from knockback; keeps sprint active between ordinary chase hits, but stops sprint for falling critical hits. A true sprint hit and falling crit cannot occur simultaneously.
-- **Bow lock-on with moving-target lead and gravity correction**, up to 54 blocks. Equip a **bow**, look toward a player and press **G**. Draw and release normally with right click; aiming is assisted while locked. Calibration assumes a fully charged ordinary bow and clear sight; distant shots, obstacles and unusual bow properties can miss.
-- Preserves v1.4 short-range A* paths, 1-block jumps, combo strafing, and optional obstacle mining.
+## Fixes
+- **Melee no longer freezes while in range:** v1.5.0 restarted the random timer whenever the target briefly missed its view ray, so the charged attack could be postponed indefinitely. In v1.5.1 the 2–3 tick delay is scheduled once when the weapon is ready, and stays ready while the opponent moves briefly out of view/range. It attacks at the next eligible moment within the server's reach.
+- **Priority for combos:** The bot does not hold back ordinary full-cooldown attacks just to attempt a critical jump while the opponent is being knocked airborne. Critical jumps now require stable close distance and yield to follow-up hits.
+- **One-block obstacle climbing:** Directional obstruction probes detect one-block walls even if your eyes still have line of sight to an opponent above them. The bot issues an actual jump, holds jump input briefly and continues moving toward the obstacle; pathfinding also keeps searching around close obstacles instead of prematurely concluding no route.
+- **Less aim drift:** Inside sword range, aim goes to the player's actual center instead of leading movement outside the hitbox.
+- Sprint pursuit and strafing avoid needlessly moving sideways while the target is nearly out of reach.
 
 ## Controls
-- **R** toggle LockOn.
-- **G** select/clear target near crosshair.
-- **H** chase/strafe mode (on by default, inactive with bow).
-- **J** timed jump crits on/off (on by default; applies to sword).
-- **B** auto-break obstacles on/off (**off by default**, destructive).
-- **Bow shooting:** hold/release right-click manually; LockOn aims automatically.
+R = toggle LockOn; G = select/clear a player; H = smart chase; J = critical jumps; B = optional block breaking (OFF by default). Bow lock-on with projectile lead is retained; draw and fire normally.
+
+## Safety and limitations
+The client attack ray is 3.1 blocks, **not** an extension of the Paper server's legitimate reach. Weapon cooldown is respected. The random attack delay is 100–150 ms **in addition** to weapon recharge at 20 TPS. Pathfinding is bounded, not complete; auto-chase can still fall in dangerous terrain. Test on a flat arena with a one-block step first. Block breaking modifies the world if enabled.
 
 ## Install
-Remove previous LockOn jars first. Download the newly built **`LockOn-26.3-v1.5.0.jar`** from this branch only after the [GitHub Actions build](https://github.com/Johnrumder-lang/123fixess/actions/workflows/build.yml) succeeds. Put it into your Modrinth Fabric 26.3 instance's `mods/` folder.
-
-## Limits
-The JAR must pass the Java 25/Fabric build. In-game behavior, real server reach, ping, arrow prediction, and pathfinding are not guaranteed. Test in an enclosed practice arena first.
+After [the real Java 25 / Fabric CI build](https://github.com/Johnrumder-lang/123fixess/actions/workflows/build.yml) succeeds, install **`LockOn-26.3-v1.5.1.jar`** from the `lockon-fixed` branch. Remove *all* older LockOn JARs from your Modrinth instance's `mods/` folder. Source-only commits are not a verified download.
