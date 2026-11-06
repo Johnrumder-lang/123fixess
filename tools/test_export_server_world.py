@@ -18,7 +18,7 @@ def main() -> None:
     ]}
     results = list(markers_in_chunk(chunk, "minecraft:overworld", set()))
     assert len(results) == 4096
-    assert results[0] == ("minecraft:overworld", "chest", 192.5, -15.5, -111.5)
+    assert results[0] == ("minecraft:overworld", "chest", 192.5, -15.5, -111.5, "minecraft:chest")
 
     # A compact palette where a single bed-head block appears at index 1.
     chunk = {"xPos": 0, "zPos": 0, "sections": [
@@ -31,7 +31,7 @@ def main() -> None:
         }}
     ]}
     results = list(markers_in_chunk(chunk, "minecraft:overworld", set()))
-    assert results == [("minecraft:overworld", "bed", 1.5, 0.5, 0.5)]
+    assert results == [("minecraft:overworld", "bed", 1.5, 0.5, 0.5, "minecraft:blue_bed")]
 
     with tempfile.TemporaryDirectory() as temp:
         root = Path(temp)
