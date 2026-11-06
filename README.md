@@ -1,16 +1,18 @@
 # LockOn for Minecraft 26.3 (Fabric)
 
-**EXPERIMENTAL SOURCE — no verified Minecraft-ready JAR is uploaded.**
+**Experimental JAR — not verified to load in Minecraft.**
 
-This project provides client-side target locking for consensual private-server testing. **R** toggles LockOn, **G** selects or clears the player nearest the crosshair. Sword attacks are attempted only when vanilla's weapon cooldown is fully charged (no fixed 20 CPS mode).
+[Download LockOn-26.3.jar](https://github.com/Johnrumder-lang/123fixess/raw/refs/heads/main/LockOn-26.3.jar)
 
-### Build
-1. Install **JDK 25** and Gradle appropriate for Fabric Loom.
-2. Clone this repository and enter the `source` folder.
-3. Run `gradle build` with network access. The result should be under `source/build/libs` if it compiles.
-4. Copy the resulting remapped Fabric mod JAR to your Modrinth **Minecraft 26.3/Fabric** instance's `mods` folder; install a matching Fabric API.
+This client-side test mod is intended for consensual private-server use. **R** toggles LockOn and **G** selects or clears a player near the crosshair. It attempts sword attacks only at full weapon cooldown, rather than fixed 20 CPS.
 
-### Status
-The source was copied from a prior prototype and is **not verified** against official Minecraft 26.3/Fabric APIs. Build or runtime failures may require source fixes. A prior experimental JAR was compiled against API placeholders, so it was **not** published as a reliable download. The earlier README incorrectly implied the JAR was present.
+### Installation
+1. Download `LockOn-26.3.jar` from the link above.
+2. Open your Minecraft 26.3 Fabric instance in the Modrinth App.
+3. Ensure Fabric API is installed for your version.
+4. Open the instance's `mods` folder, place the JAR there and launch.
 
-Avoid building inside Windows' WhatsApp Desktop transfer directories: these may deny filesystem access.
+### Compatibility warning
+The uploaded JAR is the **unverified earlier test build** compiled using API placeholders (not the official Fabric/Minecraft toolchain). Its ZIP structure is valid, but it **may not load or work in the game**. This is *not* a verified release. For a proper Fabric Loom build, see the `source/` directory, use Java JDK 25 and resolve any API incompatibilities before running `gradle build`.
+
+Avoid working inside the protected WhatsApp Desktop transfer directory on Windows; copy files to a normal folder first.
