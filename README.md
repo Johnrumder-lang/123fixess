@@ -1,50 +1,41 @@
-# LockOn v2.0.0 — Minecraft 26.3 / Fabric
+# LockOn v2.1.0 — Minecraft 26.3 / Fabric
 
-Client-only assisted PvP practice mod. Requires Java 25, Fabric API 0.165.2+26.3, Fabric Loader 0.20.1, and Cloth Config API 26.3.159. Use with the permission of the server owner and other players.
+A client-only assisted combat practice mod for a private server where the owner and other players consent. Requires Java 25, Minecraft 26.3, Fabric Loader 0.20.1, Fabric API 0.165.2+26.3 and Cloth Config API 26.3.159.
 
-## New: Vanilla Survival reach that actually works
+## New: automatic fist / empty-hand combat
 
-**Default sword attack reach is 3.0 blocks**, the normal maximum for an unmodified Survival sword. The earlier 5.0-block default was the *Creative* maximum, which a default Survival/Paper server may reject. **O → Combat** allows a conservative 2.5–3.0 block reach setting (3.0 default). Existing 3.1/5.0 saved values are automatically limited to 3.0 when you load this version. This is client-side targeting and does not bypass a server's checks.
+**LockOn now attacks with fists when your main hand is completely empty**, using the same locked target, aim assist, chase/strafe, sprint-knockback resets, combo mode and timed critical-hit attempts as a sword.
 
-Minecraft 26.3 also supports `minecraft:attack_range` components for custom weapons, and spears have different mechanics; this bot still attacks with swords. The 3.0 cap matches ordinary Survival swords, rather than every custom weapon configuration.
+- Empty-hand combat automatically activates when you switch from your sword to an **empty hotbar slot**. No new key is required.
+- Sword timing is not forced onto fists: they have a much faster vanilla cooldown. The combo minimum is **3 ticks for bare hands** rather than 8 ticks for swords, while the real attack-strength cooldown check and randomized 20–50 ms additional delay still apply. The bot does not force damage faster than the game permits.
+- Switching from a sword to fists (or back) clears the previous weapon's queued attack and combo timing.
+- The mod **does not automatically attack while holding another item**, including bows, pickaxes, food or tools. Bow targeting remains manually fired as before.
+- Unarmed attacks naturally do far less damage than a sword. Sprint knockback and crit conditions still depend on normal Minecraft mechanics.
+- This feature is covered by new deterministic test cases in GitHub Actions.
 
-## New: crosshair-to-target tracer lines
+## Existing v2.0.0 features retained
 
-Press **O → Tracers**. Each feature is an independent toggle:
+- **3.0 blocks default attempted melee reach**, matching unmodified vanilla Survival swords. Press **O → Combat** to select 2.5–3.0. The server still decides valid hit reach.
+- **Tracers:** press **O → Tracers** to independently toggle lines toward loaded players, chests, beds, custom blocks and custom entity IDs. Radius 8–32 blocks, all tracer features off by default.
+- **Combos:** 86% charged follow-up attacks when comboing, full-charge preference otherwise, 20–50 ms randomized additional delay, tactical target tracking and chase.
+- **Pathfinding:** jumps over one-block obstacles, path replanning, optional destructive block breaking OFF by default.
+- **Bow:** target prediction and drop compensation; you draw and release manually.
 
-- **Players (red)** — a red line to each other loaded player within tracer distance
-- **Chests (gold)** — chest, trapped chest, Ender chest and other blocks whose registered name contains `chest`
-- **Beds (blue)** — colored vanilla beds, including both bed parts
-- **Custom blocks (purple)** — enable this and type comma-separated block IDs, e.g. `minecraft:diamond_ore, minecraft:spawner`
-- **Custom entities (green)** — enable this and type entity IDs, e.g. `minecraft:zombie, minecraft:creeper, minecraft:armor_stand`
-- **Tracer distance** — 8 to 32 blocks, default 24
-
-Each enabled tracer is drawn from your screen center/crosshair toward the screen position of the target. Off-screen targets **in front of you** are indicated toward the edge of the screen. Targets directly behind the camera are not shown until you turn. The overlay uses only nearby entities and block states sent to the client, and may draw through walls, but **cannot reveal unloaded chunks or unknown server data**.
-
-Block scanning is incremental and capped (160 block markers and 100 custom entity tracers) to reduce stuttering; nearby chest/bed/custom-block tracers may take a short time to update after moving. HUD indicators work best in first-person view. Tracers are **OFF by default** and can be enabled separately without turning on combat lock-on.
-
-Custom IDs are regular registered Minecraft IDs. Multiple comma-separated IDs can be used. All settings persist in `config/lockon.properties`.
-
-## Other controls
+## Controls
 
 | Key | Action |
 |---|---|
-| R | Toggle combat LockOn |
-| G | Select or clear a player |
-| H | Smart chase and strafe |
-| J | Timed critical jump attempts |
-| K | Combo / Precision attack mode |
-| B | Destructive obstacle breaking (OFF by default) |
-| **O** | **Combat range and tracers settings** |
+| R | Toggle LockOn |
+| G | Select or clear player target |
+| H | Smart chasing |
+| J | Critical-hit jump attempts |
+| K | Combo / Precision mode |
+| B | Optional obstacle breaking (OFF by default) |
+| O | Reach and tracer settings |
 | U | Practice diagnostics |
 
-All previous v1.9.0 combat, bow lead, pathfinding and testable tactics behavior is retained.
+## Installation
 
-## Install
+Delete all previous LockOn JARs from your Modrinth instance's `mods/` folder. Install `LockOn-26.3-v2.1.0.jar` from the `lockon-fixed` branch **only after the [GitHub Actions build and tactics tests](https://github.com/Johnrumder-lang/123fixess/actions/workflows/build.yml) succeed**. Keep Fabric API and Cloth Config installed. Then select an opponent with **G**, enable with **R**, and switch to an empty hotbar slot to use fists.
 
-1. Open your Minecraft 26.3 Fabric instance in Modrinth. Keep Fabric API and Cloth Config installed.
-2. Remove all previous LockOn JARs from the `mods/` folder.
-3. After the [GitHub Actions Java 25 build and tactics tests](https://github.com/Johnrumder-lang/123fixess/actions/workflows/build.yml) pass, download `LockOn-26.3-v2.0.0.jar` and copy it into `mods/`.
-4. Launch, press **O**, use the **Tracers** category to enable categories individually and save. For reliable vanilla sword hits, use 3.0 reach.
-
-The build verifies compilation, not runtime visuals. Test with a visible player, one chest and a bed in a local practice world. Fabric, render mods and camera FOV settings can affect projection accuracy. The HUD does not claim to render actual world-space lines behind the camera.
+**Limitations:** Code compilation and unit tests do not verify in-game behavior. Test in an enclosed private practice arena; server reach limits, invulnerability frames, latency and weapon cooldown still apply.

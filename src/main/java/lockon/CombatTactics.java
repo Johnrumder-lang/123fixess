@@ -10,6 +10,12 @@ final class CombatTactics {
 
     private CombatTactics() {}
 
+    static int minimumAttackTicks(boolean bareHand, boolean combo) {
+        // Vanilla unarmed cooldown is shorter because bare hands have higher
+        // attack speed. Actual charge is checked separately by Minecraft.
+        return combo ? (bareHand ? 3 : 8) : 2;
+    }
+
     static double normalizeReach(double reach) {
         if (!Double.isFinite(reach)) return 3.0;
         return Math.max(2.5, Math.min(3.0, reach));

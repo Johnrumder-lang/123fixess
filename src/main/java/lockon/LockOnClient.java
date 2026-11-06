@@ -63,6 +63,9 @@ public final class LockOnClient implements ClientModInitializer {
     private static int lastCritJumpTick = -1000;
     private static int lastAttackTick = -1000;
     private static UUID lastAttackedTarget;
+    // Weapon switches invalidate the cooldown/combo timing carried from the prior item.
+    // 0=sword, 1=empty hand, 2=other item.
+    private static int previousWeaponMode = -1;
     private static Vec3 lastMovementSample;
     private static int lastMovementSampleTick;
     private static int recoveryUntilTick;
@@ -71,7 +74,6 @@ public final class LockOnClient implements ClientModInitializer {
     // earlier sprint-knockback follow-up instead of waiting for full charge.
     private static final float COMBO_ATTACK_CHARGE = 0.86f;
     private static final int COMBO_WINDOW_TICKS = 22;
-    private static final int MIN_COMBO_ATTACK_TICKS = 8;
     private static int sprintResetTicks;
     private static int navigationJumpUntil = -1;
     private static int lastNavigationJumpTick = -1000;
@@ -119,6 +121,7 @@ public final class LockOnClient implements ClientModInitializer {
             resetAttackSchedule();
             clearNavigation(mc);
             lastAttackedTarget = null;
+            previousWeaponMode = -1;
             resetTracking();
             attempts = 0;
             hurtSignals = 0;
@@ -190,6 +193,16 @@ public final class LockOnClient implements ClientModInitializer {
             stopActions(mc);
             resetAttackSchedule();
             return;
+        }
+
+        boolean bareHand = me.getMainHandItem().isEmpty();
+        boolean swordEquipped = me.getMainHandItem().is(ItemTags.SWORDS);
+        int weaponMode = bareHand ? 1 : (swordEquipped ? 0 : 2);
+        if (weaponMode != previousWeaponMode) {
+            previousWeaponMode = weaponMode;
+            resetAttackSchedule();
+            lastAttackTick = -1000;
+            lastAttackedTarget = null;
         }
 
         boolean bowEquipped = me.getMainHandItem().is(Items.BOW);
@@ -332,8 +345,13 @@ public final class LockOnClient implements ClientModInitializer {
     }
 
     private static void attack(Minecraft mc, LocalPlayer me, Player target) {
+        // An empty main hand is a real vanilla melee weapon (fists).
+        // Keep sword and fist support, without triggering automated attacks
+        // for bows, pickaxes, food, or any other non-sword item.
+        boolean bareHand = me.getMainHandItem().isEmpty();
+        boolean swordEquipped = me.getMainHandItem().is(ItemTags.SWORDS);
         if (mc.gameMode == null || me.isUsingItem()
-            || !me.getMainHandItem().is(ItemTags.SWORDS) || miningPos != null) {
+            || (!swordEquipped && !bareHand) || miningPos != null) {
             resetAttackSchedule();
             return;
         }
@@ -343,7 +361,10 @@ public final class LockOnClient implements ClientModInitializer {
         boolean combo = comboWindow(me, target);
         float requiredCharge = combo ? COMBO_ATTACK_CHARGE : 0.999f;
         int elapsed = ticks - lastAttackTick;
-        if (elapsed < (combo ? MIN_COMBO_ATTACK_TICKS : 2)
+        // Fists recharge substantially faster than swords; the shared 8-tick
+        // sword minimum would needlessly skip multiple bare-hand opportunities.
+        int minimumTicks = CombatTactics.minimumAttackTicks(bareHand, combo);
+        if (elapsed < minimumTicks
             || me.getAttackStrengthScale(0.0f) < requiredCharge) return;
 
         // Preserve the randomized 20-50 ms delay after the appropriate
@@ -634,6 +655,7 @@ public final class LockOnClient implements ClientModInitializer {
         sprintResetTicks = 0;
         lastAttackTick = -1000;
         lastAttackedTarget = null;
+        previousWeaponMode = -1;
         lastMovementSample = null;
         lastMovementSampleTick = 0;
         recoveryUntilTick = 0;
