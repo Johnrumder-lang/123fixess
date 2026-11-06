@@ -125,6 +125,7 @@ public final class LockOnTracers {
     }
 
     private static void scanTick(Minecraft mc) {
+        LockOnWorldIndex.tick(mc);
         tickCount++;
         if (mc.level != scanWorld) {
             scanWorld = mc.level;
@@ -295,6 +296,16 @@ public final class LockOnTracers {
             for (Marker marker : visibleBlocks) {
                 if (marker.pos.distanceToSqr(eye) > maxDistanceSq) continue;
                 drawTracer(graphics, eye, forward, right, up, focal, marker.pos, marker.color);
+            }
+            // Only user-supplied, server-administrator-exported records can
+            // cover saved world areas beyond the client streaming boundary.
+            // Every category remains independently controllable.
+            if (LockOnSettings.traceServerIndex()) {
+                for (LockOnWorldIndex.Marker marker : LockOnWorldIndex.visible()) {
+                    if (marker.position().distanceToSqr(eye) > maxDistanceSq) continue;
+                    drawTracer(graphics, eye, forward, right, up, focal,
+                        marker.position(), LockOnWorldIndex.color(marker));
+                }
             }
         }
     }
