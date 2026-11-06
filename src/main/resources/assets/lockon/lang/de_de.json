@@ -4,5 +4,6 @@
   "key.lockon.movement": "LockOn: intelligentes Verfolgen",
   "key.lockon.criticals": "LockOn: Sprung-Krits",
   "key.lockon.mining": "LockOn: Hindernisse abbauen (zerstörend)",
-  "key.lockon.mode": "LockOn: Präzision/Combo-Modus"
+  "key.lockon.mode": "LockOn: Präzision/Combo-Modus",
+  "key.lockon.settings": "LockOn: Einstellungen öffnen"
 }
