@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "id": "lockon",
+  "version": "${version}",
+  "name": "LockOn",
+  "description": "Private-server PvP lock-on, sword attacks only at full cooldown.",
+  "environment": "client",
+  "entrypoints": {"client": ["lockon.LockOnClient"]},
+  "depends": {
+    "fabricloader": ">=0.20.1",
+    "minecraft": "26.3",
+    "java": ">=25",
+    "fabric-api": "*"
+  }
+}
