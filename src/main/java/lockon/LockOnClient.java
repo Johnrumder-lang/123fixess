@@ -28,8 +28,8 @@ import net.minecraft.world.phys.Vec3;
  */
 public final class LockOnClient implements ClientModInitializer {
     private static final double TARGET_RANGE = 17.0;
-    // Aim/attack ray length is 3.1 blocks; actual hits still require server-valid reach.
-    private static final double ATTACK_REACH = 3.1;
+    // Saved client-only attack ray. Server validates the actual reach.
+    private static double attackReach() { return LockOnSettings.attackReach(); }
     private static final double BOW_TRACK_RANGE = 54.0;
     private static final double ARROW_SPEED = 3.0;
     private static final double ARROW_GRAVITY = 0.05;
@@ -47,7 +47,7 @@ public final class LockOnClient implements ClientModInitializer {
     private static boolean ownsMovement;
     private static UUID targetId;
     private static ClientLevel previousLevel;
-    private static KeyMapping toggleKey, selectKey, chaseKey, critKey, mineKey, modeKey;
+    private static KeyMapping toggleKey, selectKey, chaseKey, critKey, mineKey, modeKey, settingsKey;
     private static int ticks;
     private static int nextPlanAt;
     private static int nextCritJumpAt;
@@ -70,12 +70,14 @@ public final class LockOnClient implements ClientModInitializer {
     private static BlockPos miningPos;
 
     @Override public void onInitializeClient() {
+        LockOnSettings.load();
         toggleKey = key("key.lockon.toggle", InputConstants.KEY_R);
         selectKey = key("key.lockon.target", InputConstants.KEY_G);
         chaseKey = key("key.lockon.movement", InputConstants.KEY_H);
         critKey = key("key.lockon.criticals", InputConstants.KEY_J);
         mineKey = key("key.lockon.mining", InputConstants.KEY_B);
         modeKey = key("key.lockon.mode", InputConstants.KEY_K);
+        settingsKey = key("key.lockon.settings", InputConstants.KEY_O);
         ClientTickEvents.END_CLIENT_TICK.register(LockOnClient::tick);
         // Rendering runs between client ticks, letting us check the 20-50ms
         // deadline more often than Minecraft's normal 50ms gameplay tick.
@@ -114,6 +116,12 @@ public final class LockOnClient implements ClientModInitializer {
             return;
         }
 
+        while (settingsKey.consumeClick()) {
+            stopActions(mc);
+            resetAttackSchedule();
+            mc.gui.setScreen(LockOnSettings.createScreen(mc.gui.screen()));
+            return;
+        }
         while (toggleKey.consumeClick()) {
             enabled = !enabled;
             if (!enabled) {
@@ -198,6 +206,7 @@ public final class LockOnClient implements ClientModInitializer {
         while (critKey.consumeClick()) {}
         while (mineKey.consumeClick()) {}
         while (modeKey.consumeClick()) {}
+        while (settingsKey.consumeClick()) {}
     }
 
     private static void aimAt(LocalPlayer me, Player target) {
@@ -298,7 +307,7 @@ public final class LockOnClient implements ClientModInitializer {
         // Keep the attack ready when just outside reach; hit immediately
         // on re-entry. Still enforce line of sight and actual hitbox aim.
         Vec3 eye = me.getEyePosition();
-        Vec3 ray = eye.add(me.getViewVector(1.0f).scale(ATTACK_REACH));
+        Vec3 ray = eye.add(me.getViewVector(1.0f).scale(attackReach()));
         if (!me.hasLineOfSight(target)
             || target.getBoundingBox().inflate(0.08).clip(eye, ray).isEmpty()) return;
 
@@ -380,7 +389,7 @@ public final class LockOnClient implements ClientModInitializer {
                 safeSide && !left, safeForward);
             return;
         }
-        if (d < 3.05 && sameHeight && !oneBlockAhead && me.hasLineOfSight(target)) {
+        if (d < Math.max(3.05, attackReach() - 0.12) && sameHeight && !oneBlockAhead && me.hasLineOfSight(target)) {
             stopMining(mc);
             nextStep = null;
             // Small alternating orbit and measured backing off. Never chase into a hole.
@@ -396,7 +405,8 @@ public final class LockOnClient implements ClientModInitializer {
             // For a combo, prioritize forward momentum instead of side
             // strafing: closing on knockback is what maintains pressure.
             boolean combo = comboWindow(me, target);
-            boolean forward = d > (combo || airborneOpponent ? 1.65 : 2.15)
+            double desiredGap = Math.max(1.65, attackReach() - 0.55);
+            boolean forward = d > (combo || airborneOpponent ? Math.max(1.65, desiredGap - 0.2) : desiredGap)
                 && Navigator.safeForward(mc.level, me, dxToTarget, dzToTarget);
             boolean back = !combo && !airborneOpponent && d < 1.30;
             boolean orbit = !combo && d < 2.6 && !forward
@@ -435,7 +445,7 @@ public final class LockOnClient implements ClientModInitializer {
             stopMining(mc);
             // If bounded A* cannot find a waypoint, do not freeze on flat
             // terrain. Fall back to safe direct pursuit when supported.
-            if (d > 3.05 && Navigator.safeForward(mc.level, me, dxToTarget, dzToTarget)) {
+            if (d > Math.max(3.05, attackReach() - 0.12) && Navigator.safeForward(mc.level, me, dxToTarget, dzToTarget)) {
                 setMovement(mc, true, false, false, false, sprintResetTicks == 0);
             } else {
                 releaseMovement(mc);
