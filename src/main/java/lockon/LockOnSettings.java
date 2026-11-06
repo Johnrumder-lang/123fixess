@@ -15,7 +15,7 @@ import net.minecraft.network.chat.Component;
 
 /** Saved client-side attack-ray setting. The server still validates reach. */
 public final class LockOnSettings {
-    private static final int DEFAULT_REACH_TENTHS = 31;
+    private static final int DEFAULT_REACH_TENTHS = 50;
     private static int reachTenths = DEFAULT_REACH_TENTHS;
 
     private LockOnSettings() {}
@@ -30,7 +30,12 @@ public final class LockOnSettings {
         Properties properties = new Properties();
         try (InputStream stream = Files.newInputStream(path)) {
             properties.load(stream);
-            double value = Double.parseDouble(properties.getProperty("attackReach", "3.1"));
+            double value = Double.parseDouble(properties.getProperty("attackReach", "5.0"));
+            // Migrate the old 1.8.0 default to the new 5-block vanilla
+            // creative maximum. Preserve deliberate non-default values.
+            if (!properties.containsKey("settingsVersion") && Math.abs(value - 3.1) < 0.0001) {
+                value = 5.0;
+            }
             if (Double.isFinite(value)) setReach(value);
         } catch (IOException | NumberFormatException ignored) {
             reachTenths = DEFAULT_REACH_TENTHS;
@@ -47,6 +52,7 @@ public final class LockOnSettings {
         try {
             Files.createDirectories(file().getParent());
             Properties properties = new Properties();
+            properties.setProperty("settingsVersion", "2");
             properties.setProperty("attackReach", String.format(java.util.Locale.ROOT, "%.1f", attackReach()));
             try (OutputStream stream = Files.newOutputStream(file())) {
                 properties.store(stream, "Client attack reach; server must permit this value");
@@ -68,7 +74,7 @@ public final class LockOnSettings {
         ConfigEntryBuilder entries = builder.entryBuilder();
         combat.addEntry(entries.startDoubleField(
                 Component.literal("Attempted attack reach (3.0 - 5.0 blocks)"), attackReach())
-            .setDefaultValue(3.1)
+            .setDefaultValue(5.0)
             .setMin(3.0)
             .setMax(5.0)
             .setSaveConsumer(LockOnSettings::setReach)
