@@ -101,8 +101,8 @@ public final class LockOnTracers {
         }
         // Nearest chunks first: even a huge scan shows nearby items quickly.
         found.sort(Comparator.comparingLong(p -> {
-            long dx = p.x - (long) scanOriginChunkX;
-            long dz = p.z - (long) scanOriginChunkZ;
+            long dx = p.x() - (long) scanOriginChunkX;
+            long dz = p.z() - (long) scanOriginChunkZ;
             return dx * dx + dz * dz;
         }));
         chunks = found;
@@ -163,12 +163,12 @@ public final class LockOnTracers {
         while (budget > 0 && chunkCursor < chunks.size()
                && scanResults.size() < MAX_BLOCK_MARKERS) {
             ChunkPos pos = chunks.get(chunkCursor);
-            if (!mc.level.hasChunk(pos.x, pos.z)) {
+            if (!mc.level.hasChunk(pos.x(), pos.z())) {
                 chunkCursor++;
                 sectionCursor = cellCursor = 0;
                 continue;
             }
-            var chunk = mc.level.getChunk(pos.x, pos.z);
+            var chunk = mc.level.getChunk(pos.x(), pos.z());
             LevelChunkSection[] sections = chunk.getSections();
             if (sectionCursor >= sections.length) {
                 chunkCursor++;
@@ -203,8 +203,8 @@ public final class LockOnTracers {
                 if (!scanningUnlimited
                     && Math.abs(by - scanOrigin.getY()) > HEIGHT_RADIUS_FINITE) continue;
 
-                int bx = (pos.x << 4) + localX;
-                int bz = (pos.z << 4) + localZ;
+                int bx = (pos.x() << 4) + localX;
+                int bz = (pos.z() << 4) + localZ;
                 if (!scanningUnlimited) {
                     int dx = bx - scanOrigin.getX();
                     int dz = bz - scanOrigin.getZ();
@@ -228,7 +228,7 @@ public final class LockOnTracers {
 
         // Publish partial discoveries, instead of making infinity mode wait
         // for every section to be visited before any tracer can appear.
-        if (changed && tickCount % 4 == 0) {
+        if (!scanResults.isEmpty() && tickCount % 4 == 0) {
             visibleBlocks = List.copyOf(scanResults);
         }
         if (chunkCursor >= chunks.size() || scanResults.size() >= MAX_BLOCK_MARKERS) {
