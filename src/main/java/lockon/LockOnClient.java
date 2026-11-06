@@ -14,6 +14,7 @@ import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.network.chat.Component;
+import net.minecraft.network.protocol.game.ServerboundPunchPacket;
 import net.minecraft.tags.ItemTags;
 import net.minecraft.util.Mth;
 import net.minecraft.world.InteractionHand;
@@ -499,10 +500,17 @@ public final class LockOnClient implements ClientModInitializer {
             releaseSprint(mc);
         }
 
+        // Minecraft 26.3 uses TWO serverbound packets for an ordinary hit:
+        // 1) gameMode.attack sends ServerboundAttackPacket (entity id)
+        // 2) vanilla Minecraft.startAttack also sends ServerboundPunchPacket
+        //    after the client-side swing animation. LivingEntity.swing(...)
+        //    no longer sends this packet! Omitting it breaks the vanilla
+        //    server-side swing / attack-strength timing sequence.
         mc.gameMode.attack(me, target);
-        attempts++;
-        lastAttackHold = "attack sent";
         me.swing(InteractionHand.MAIN_HAND, me.getMainHandItem().getAttackAnimation(), false);
+        me.connection.send(ServerboundPunchPacket.INSTANCE);
+        attempts++;
+        lastAttackHold = "attack + punch packets sent";
         lastAttackTick = ticks;
         lastAttackedTarget = target.getUUID();
         resetAttackSchedule();
