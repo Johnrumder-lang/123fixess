@@ -38,7 +38,7 @@ public final class CombatTacticsTest {
             false, false, false, true, true, true, true, false, false);
         check(!cliff.forward() && !cliff.sprint(), "do not sprint off an unsupported edge");
 
-        var hover = CombatTactics.move(2.5, 3.0, 0,
+        var hover = CombatTactics.move(2.35, 3.0, 0,
             false, false, true, true, true, true, true, false, false);
         check(hover.left() && !hover.right(), "orbit only outside combos");
 
