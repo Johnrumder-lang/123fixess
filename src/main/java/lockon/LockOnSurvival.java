@@ -11,6 +11,9 @@ import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.protocol.game.ServerboundPunchPacket;
 import net.minecraft.tags.ItemTags;
+import net.minecraft.tags.BlockTags;
+import net.minecraft.world.inventory.ContainerInput;
+import net.minecraft.world.inventory.InventoryMenu;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.monster.Monster;
@@ -31,11 +34,13 @@ import net.minecraft.util.Mth;
  * Does not request server chunks, teleport, or assume creative permissions.
  */
 public final class LockOnSurvival {
-    private enum Phase { OFF, TUNNEL, RETURN, BASE, PAUSED }
+    private enum Phase { OFF, BOOTSTRAP, TUNNEL, RETURN, BASE, PAUSED }
     private static Phase phase = Phase.OFF;
     private static BlockPos base;
     private static ClientLevel world;
     private static Direction tunnelDirection = Direction.NORTH;
+    private static Direction baseFacing = Direction.NORTH;
+    private static int cycles;
     private static int steps;
     private static int ticks;
     private static int startTick;
@@ -55,13 +60,16 @@ public final class LockOnSurvival {
 
     public static boolean enabled() { return phase != Phase.OFF; }
     public static boolean managingContainer() {
-        return phase == Phase.BASE && LockOnBase.managingContainer();
+        return (phase == Phase.BASE && LockOnBase.managingContainer())
+            || (phase == Phase.BOOTSTRAP && LockOnBootstrap.managingContainer());
     }
 
     public static String status() {
-        return phase + " " + steps + "/" + LockOnSettings.stripLength()
+        return phase + " cycle=" + cycles + " " + steps + "/" + LockOnSettings.stripLength()
             + " blocks=" + blocksMined + ", mobs=" + mobsAttacked
-            + ", food=" + foodUsed + (reason.isEmpty() ? "" : " (" + reason + ")");
+            + ", food=" + foodUsed
+            + (phase == Phase.BOOTSTRAP ? " / " + LockOnBootstrap.status() : "")
+            + (reason.isEmpty() ? "" : " (" + reason + ")");
     }
 
     public static void toggle(Minecraft mc) {
@@ -75,22 +83,26 @@ public final class LockOnSurvival {
         base = BlockPos.containing(me.getX(), me.getY() + 0.08, me.getZ());
         tunnelDirection = Direction.fromYRot(me.getYRot());
         if (tunnelDirection.getAxis().isVertical()) tunnelDirection = Direction.NORTH;
+        baseFacing = tunnelDirection;
         steps = 0;
+        cycles = 0;
         blocksMined = mobsAttacked = foodUsed = 0;
         ticks = 0;
         startTick = 0;
         miningBlock = null;
-        phase = Phase.TUNNEL;
+        phase = Phase.BOOTSTRAP;
         reason = "";
         LockOnBase.reset();
-        notice(me, "Survival mining ON. Base marked at " + base.toShortString()
-            + ". Strip direction " + tunnelDirection + ". P stops anytime.");
+        LockOnBootstrap.reset(mc,base,baseFacing);
+        notice(me, "Autoplay ON at " + base.toShortString()
+            + ": gathering wood and crafting first. P stops anytime.");
     }
 
     public static void stop(Minecraft mc, String message) {
         cancelDig(mc);
         release(mc);
         LockOnBase.stop(mc);
+        LockOnBootstrap.stop(mc);
         phase = Phase.OFF;
         eating = false;
         foodSlot = -1;
@@ -114,8 +126,20 @@ public final class LockOnSurvival {
         }
         if (phase == Phase.BASE) {
             release(mc);
-            if (LockOnBase.tick(mc, base, tunnelDirection)) {
-                stop(mc, "Strip finished and base processing complete. " + status());
+            if (LockOnBase.tick(mc, base, baseFacing)) {
+                if (LockOnSettings.survivalAutoRepeat()) {
+                    cycles++;
+                    tunnelDirection = tunnelDirection.getClockWise();
+                    steps = 0;
+                    startTick = ticks;
+                    reason = "Starting next mining run " + (cycles + 1);
+                    phase = Phase.TUNNEL;
+                    if (mc.player != null)
+                        notice(mc.player,"Base cycle complete. Mining again: " + tunnelDirection
+                            + " (cycle " + (cycles + 1) + ")");
+                } else {
+                    stop(mc,"Mining and base processing complete. "+status());
+                }
             }
             return;
         }
@@ -171,6 +195,18 @@ public final class LockOnSurvival {
             return;
         }
 
+        if (phase == Phase.BOOTSTRAP) {
+            if (LockOnBootstrap.tick(mc)) {
+                LockOnBootstrap.stop(mc);
+                steps = 0;
+                startTick = ticks;
+                phase = Phase.TUNNEL;
+                reason = "Tools crafted: strip mining";
+                notice(me,"Wood and tools ready. Starting first mining tunnel.");
+            }
+            return;
+        }
+
         if (phase == Phase.RETURN) {
             returnToBase(mc, me);
             return;
@@ -208,7 +244,7 @@ public final class LockOnSurvival {
             return;
         }
 
-        BlockPos next = base.relative(tunnelDirection, steps + 1);
+        BlockPos next = tunnelPoint(steps + 1);
         BlockPos support = next.below();
         if (!mc.level.hasChunk(next.getX() >> 4, next.getZ() >> 4)) {
             pause(mc, "Unloaded chunk ahead; stop"); return;
@@ -238,7 +274,7 @@ public final class LockOnSurvival {
         double dx = next.getX() + 0.5 - me.getX();
         double dz = next.getZ() + 0.5 - me.getZ();
         double horizontal = Math.hypot(dx, dz);
-        if (horizontal <= 0.38) {
+        if (horizontal <= 0.52 && Math.abs(me.getY() - next.getY()) < 0.75) {
             steps++;
             release(mc);
             return;
@@ -246,11 +282,20 @@ public final class LockOnSurvival {
         if (horizontal > 3.6) {
             pause(mc, "Player left original tunnel / desynchronized"); return;
         }
-        if (!Navigator.safeForward(mc.level, me, dx, dz)) {
+        // At each fourth block descend exactly one block on a supported
+        // staircase. Horizontal-only safeForward() would falsely report
+        // a gap at this intentional, bounded one-block drop.
+        boolean descending = next.getY() < me.getY() - 0.35;
+        if (descending && (me.getY() - next.getY() > 1.45
+            || mc.level.getBlockState(next.below()).getCollisionShape(
+                mc.level,next.below()).isEmpty())) {
+            pause(mc,"Unsafe downhill step");return;
+        }
+        if (!descending && !Navigator.safeForward(mc.level, me, dx, dz)) {
             pause(mc, "Unsafe movement ahead"); return;
         }
         face(me, Vec3.atCenterOf(next).add(0,0.4,0));
-        moveForward(mc, true);
+        moveForward(mc, false);
     }
 
     private static boolean canMine(Minecraft mc, LocalPlayer me, BlockPos pos) {
@@ -265,28 +310,47 @@ public final class LockOnSurvival {
         float hardness = s.getDestroySpeed(mc.level, pos);
         if (hardness < 0.0f || hardness > 12.0f) return false;
         if (me.getEyePosition().distanceTo(Vec3.atCenterOf(pos)) > 4.25) return false;
-        // Reject vanilla ore harvesting with inappropriate tools, rather
-        // than mining diamond ore with a fist and losing all the drops.
+        // BlockTags encode the actual vanilla harvesting tier. Don't break
+        // rare ore using a wooden tool, which destroys the drop.
         return equipToolFor(mc, me, s);
     }
 
     private static boolean equipToolFor(Minecraft mc, LocalPlayer me, BlockState state) {
-        int selected = me.getInventory().getSelectedSlot();
         int best = -1;
         float bestSpeed = -1;
-        for (int i=0; i<9; i++) {
+        for (int i=0; i<36; i++) {
             ItemStack stack = me.getInventory().getItem(i);
-            if (stack.isEmpty()) continue;
-            // Use an actual pickaxe for ores and stone; skip useless hand mining.
-            if (!stack.is(ItemTags.PICKAXES)) continue;
+            if (stack.isEmpty() || !stack.is(ItemTags.PICKAXES)) continue;
+            if (state.is(BlockTags.NEEDS_DIAMOND_TOOL)
+                && !(stack.is(Items.DIAMOND_PICKAXE)
+                    || stack.is(Items.NETHERITE_PICKAXE))) continue;
+            if (state.is(BlockTags.NEEDS_IRON_TOOL)
+                && !(stack.is(Items.IRON_PICKAXE)
+                    || stack.is(Items.DIAMOND_PICKAXE)
+                    || stack.is(Items.NETHERITE_PICKAXE))) continue;
+            if (state.is(BlockTags.NEEDS_STONE_TOOL)
+                && !(stack.is(Items.STONE_PICKAXE)
+                    || stack.is(Items.IRON_PICKAXE)
+                    || stack.is(Items.DIAMOND_PICKAXE)
+                    || stack.is(Items.NETHERITE_PICKAXE))) continue;
             float speed = stack.getDestroySpeed(state);
-            if (speed > bestSpeed) { best=i; bestSpeed=speed; }
+            if (speed > bestSpeed) {best=i;bestSpeed=speed;}
         }
-        if (best >= 0) {
-            if (selected != best) me.getInventory().setSelectedSlot(best);
-            return true;
+        if(best<0)return false;
+        if(best>=9) {
+            // Crafted tools can land in the main inventory. Swap the best
+            // pickaxe into an empty or low-priority hotbar slot using a
+            // regular player-inventory action, without opening a GUI.
+            if(!(me.containerMenu instanceof InventoryMenu)) return false;
+            int targetSlot=8;
+            for(int i=0;i<9;i++)
+                if(me.getInventory().getItem(i).isEmpty()){targetSlot=i;break;}
+            mc.gameMode.handleContainerInput(me.containerMenu.containerId,
+                best,targetSlot,ContainerInput.SWAP,me);
+            return false;
         }
-        return false;
+        me.getInventory().setSelectedSlot(best);
+        return true;
     }
 
     private static BlockPos findReachableOre(Minecraft mc, LocalPlayer me) {
@@ -449,23 +513,49 @@ public final class LockOnSurvival {
         mc.options.keyUse.setDown(false);
     }
 
+    // A shallow staircase from the original surface home into stone.
+    // Revisit every waypoint in reverse on return; no teleportation.
+    private static BlockPos tunnelPoint(int index) {
+        int interval = Math.max(2, 4 - cycles / 4);
+        int depth = Math.min(24, Math.max(0,index) / interval);
+        return base.relative(tunnelDirection,Math.max(0,index)).below(depth);
+    }
+
     private static void returnToBase(Minecraft mc,LocalPlayer me) {
         if (base == null) { pause(mc,"No base recorded");return; }
-        double dx=base.getX()+0.5-me.getX();
-        double dz=base.getZ()+0.5-me.getZ();
+        BlockPos destination = steps > 0 ? tunnelPoint(steps-1) : base;
+        double dx=destination.getX()+0.5-me.getX();
+        double dz=destination.getZ()+0.5-me.getZ();
         double d=Math.hypot(dx,dz);
-        if(d<1.4){
+        if (d < 0.65 && Math.abs(me.getY()-destination.getY()) < 0.85) {
+            if (steps > 0) {
+                steps--;
+                release(mc);
+                return;
+            }
             release(mc);
             phase=Phase.BASE;
             LockOnBase.reset();
-            reason="base processing";
+            reason="home processing (chest, furnace, materials)";
             return;
         }
-        if(!Navigator.safeForward(mc.level, me,dx,dz)){
-            pause(mc,"Return path blocked or unsafe");return;
+        if (d > 3.0) {
+            pause(mc,"Lost original return path; manual help needed");
+            return;
         }
-        face(me,new Vec3(base.getX()+0.5,me.getEyeY(),base.getZ()+0.5));
+        boolean uphill=destination.getY()>me.getY()+0.35;
+        if (uphill) {
+            if (destination.getY()-me.getY()>1.45
+                || !Navigator.safeToJump(mc.level,me)) {
+                pause(mc,"Unsafe upward return step");return;
+            }
+        } else if(!Navigator.safeForward(mc.level,me,dx,dz)) {
+            pause(mc,"Return route blocked or unsupported");return;
+        }
+        face(me,new Vec3(destination.getX()+0.5,me.getEyeY(),
+            destination.getZ()+0.5));
         moveForward(mc,false);
+        mc.options.keyJump.setDown(uphill);
     }
 
     private static void face(LocalPlayer me,Vec3 target) {

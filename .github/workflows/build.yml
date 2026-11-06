@@ -30,6 +30,12 @@ jobs:
           mkdir -p build/survival-policy-tests
           javac --release 25 -d build/survival-policy-tests src/main/java/lockon/SurvivalPolicy.java src/test/java/lockon/SurvivalPolicyTest.java
           java -cp build/survival-policy-tests lockon.SurvivalPolicyTest
+      - name: Test autonomous wood-to-tools progression
+        run: |
+          mkdir -p build/autoplay-tests
+          javac --release 25 -d build/autoplay-tests src/main/java/lockon/AutoplayPlan.java src/test/java/lockon/AutoplayPlanTest.java
+          java -cp build/autoplay-tests lockon.AutoplayPlanTest
+          python3 tools/test_autoplay_sources.py
       - name: Check administrator world scanner and snapshot tests
         run: |
           python3 -m py_compile tools/export_server_world.py tools/test_export_server_world.py
@@ -41,20 +47,20 @@ jobs:
         run: gradle --no-daemon -p server-paper build --stacktrace
       - name: Publish versioned JAR after successful build
         run: |
-          test -s build/libs/lockon-2.9.0.jar
-          test -s server-paper/build/libs/lockon-paper-2.9.0.jar
-          cp build/libs/lockon-2.9.0.jar LockOn-26.3-v2.9.0.jar
-          cp server-paper/build/libs/lockon-paper-2.9.0.jar LockOn-Server-Paper-26.3-v2.9.0.jar
+          test -s build/libs/lockon-3.0.0.jar
+          test -s server-paper/build/libs/lockon-paper-3.0.0.jar
+          cp build/libs/lockon-3.0.0.jar LockOn-26.3-v3.0.0.jar
+          cp server-paper/build/libs/lockon-paper-3.0.0.jar LockOn-Server-Paper-26.3-v3.0.0.jar
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add -f LockOn-26.3-v2.9.0.jar LockOn-Server-Paper-26.3-v2.9.0.jar
+          git add -f LockOn-26.3-v3.0.0.jar LockOn-Server-Paper-26.3-v3.0.0.jar
           if ! git diff --cached --quiet; then
-            git commit -m 'Publish LockOn-26.3-v2.9.0.jar [skip ci]'
+            git commit -m 'Publish LockOn-26.3-v3.0.0.jar [skip ci]'
             git push
           fi
       - uses: actions/upload-artifact@v4
         with:
-          name: LockOn-26.3-v2.9.0
+          name: LockOn-26.3-v3.0.0
           path: |
-            LockOn-26.3-v2.9.0.jar
-            LockOn-Server-Paper-26.3-v2.9.0.jar
+            LockOn-26.3-v3.0.0.jar
+            LockOn-Server-Paper-26.3-v3.0.0.jar

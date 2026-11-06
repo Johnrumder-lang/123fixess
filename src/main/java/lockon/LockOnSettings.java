@@ -24,6 +24,7 @@ public final class LockOnSettings {
     private static boolean tracePlayers;
     private static int stripLength = 32;
     private static boolean survivalFightMobs = true;
+    private static boolean survivalAutoRepeat = true;
     private static boolean survivalAutoEat = true;
     private static boolean survivalStore = true;
     private static boolean survivalSmelt = true;
@@ -46,6 +47,7 @@ public final class LockOnSettings {
     public static double attackReach() { return reachTenths / 10.0; }
     public static int stripLength() { return stripLength; }
     public static boolean survivalFightMobs() { return survivalFightMobs; }
+    public static boolean survivalAutoRepeat() { return survivalAutoRepeat; }
     public static boolean survivalAutoEat() { return survivalAutoEat; }
     public static boolean survivalStore() { return survivalStore; }
     public static boolean survivalSmelt() { return survivalSmelt; }
@@ -133,6 +135,7 @@ public final class LockOnSettings {
             stripLength = Math.max(8, Math.min(64,
                 Integer.parseInt(p.getProperty("stripLength", "32"))));
             survivalFightMobs = Boolean.parseBoolean(p.getProperty("survivalFightMobs", "true"));
+            survivalAutoRepeat = Boolean.parseBoolean(p.getProperty("survivalAutoRepeat", "true"));
             survivalAutoEat = Boolean.parseBoolean(p.getProperty("survivalAutoEat", "true"));
             survivalStore = Boolean.parseBoolean(p.getProperty("survivalStore", "true"));
             survivalSmelt = Boolean.parseBoolean(p.getProperty("survivalSmelt", "true"));
@@ -160,6 +163,7 @@ public final class LockOnSettings {
         p.setProperty("attackReach", String.format(Locale.ROOT, "%.1f", attackReach()));
         p.setProperty("stripLength", Integer.toString(stripLength));
         p.setProperty("survivalFightMobs", Boolean.toString(survivalFightMobs));
+        p.setProperty("survivalAutoRepeat", Boolean.toString(survivalAutoRepeat));
         p.setProperty("survivalAutoEat", Boolean.toString(survivalAutoEat));
         p.setProperty("survivalStore", Boolean.toString(survivalStore));
         p.setProperty("survivalSmelt", Boolean.toString(survivalSmelt));
@@ -207,6 +211,10 @@ public final class LockOnSettings {
             .setDefaultValue(32).setMin(8).setMax(64)
             .setSaveConsumer(v -> stripLength = Math.max(8, Math.min(64, v)))
             .build());
+        survive.addEntry(entries.startBooleanToggle(
+                Component.literal("Keep grinding after storing loot (continuous P mode)"),
+                survivalAutoRepeat)
+            .setDefaultValue(true).setSaveConsumer(v -> survivalAutoRepeat = v).build());
         survive.addEntry(entries.startBooleanToggle(
                 Component.literal("Defend against hostile mobs"), survivalFightMobs)
             .setDefaultValue(true).setSaveConsumer(v -> survivalFightMobs = v).build());

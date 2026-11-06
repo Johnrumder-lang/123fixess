@@ -33,7 +33,7 @@ import net.minecraft.core.registries.BuiltInRegistries;
  * may be manipulated. One inventory input per game tick at most.
  */
 final class LockOnBase {
-    private enum Stage { TABLE, CHEST, FURNACE, SMELT, COMPACT, STORE, DONE }
+    private enum Stage { TABLE, CHEST, UPGRADE_TOOL, FURNACE, SMELT, COMPACT, STORE, DONE }
     private static Stage stage = Stage.TABLE;
     private static BlockPos table, chest, furnace;
     private static int ticks, stageTicks, lastInput;
@@ -86,9 +86,14 @@ final class LockOnBase {
         // Stage-specific timeouts prevent a stalled GUI from trapping a bot.
         stageTicks++;
         if (stageTicks > 2400) advance(mc);
-        if (table == null) table = base.relative(direction.getOpposite(),2);
-        if (chest == null) chest = base.relative(direction.getClockWise(),2);
-        if (furnace == null) furnace = base.relative(direction.getCounterClockWise(),2);
+        // Keep utility stations in diagonal corners so none block the four
+        // cardinal strip-mining lanes used by continuous survival mode.
+        if (table == null) table = base.relative(direction.getOpposite(),2)
+            .relative(direction.getClockWise(),2);
+        if (chest == null) chest = base.relative(direction,2)
+            .relative(direction.getClockWise(),2);
+        if (furnace == null) furnace = base.relative(direction.getOpposite(),2)
+            .relative(direction.getCounterClockWise(),2);
         if (ticks - lastInput < 2) return false;
 
         switch (stage) {
@@ -109,7 +114,7 @@ final class LockOnBase {
                     }
                     return false;
                 }
-                status="No crafting table or 4 planks";
+                status="No crafting table or four planks yet";
                 missingMaterials=true;
                 advance(mc);
             }
@@ -130,6 +135,28 @@ final class LockOnBase {
                 }
                 status="Chest requires 8 planks + crafting table";
                 missingMaterials=true;
+                advance(mc);
+            }
+            case UPGRADE_TOOL -> {
+                if (hasTool(mc.player,Items.STONE_PICKAXE)
+                    || hasTool(mc.player,Items.IRON_PICKAXE)
+                    || hasTool(mc.player,Items.DIAMOND_PICKAXE)
+                    || hasTool(mc.player,Items.NETHERITE_PICKAXE)) {
+                    advance(mc);
+                    return false;
+                }
+                if(countInventory(mc.player,Items.COBBLESTONE)>=3
+                    && countInventory(mc.player,Items.STICK)>=2
+                    && isBlock(mc,table,Blocks.CRAFTING_TABLE)){
+                    if(open(mc,table,CraftingMenu.class)){
+                        if(craft(mc,Items.COBBLESTONE,new int[]{1,2,3},
+                            Items.STICK,new int[]{5,8},false)){
+                            close(mc);
+                        }
+                    }
+                    return false;
+                }
+                status="Stone pickaxe requires 3 cobblestone and 2 sticks";
                 advance(mc);
             }
             case FURNACE -> {
@@ -238,8 +265,8 @@ final class LockOnBase {
                 advance(mc);
             }
             case DONE -> {
-                message(mc,"Base processing complete: "+status()
-                    + (missingMaterials ? " (some stations need materials)" : ""));
+                message(mc,"Base processing pass: "+status()
+                    + (missingMaterials ? " (materials still needed; will retry)" : ""));
                 stop(mc);return true;
             }
         }
@@ -314,6 +341,10 @@ final class LockOnBase {
                 return item.getItem();
         }
         return null;
+    }
+
+    private static boolean hasTool(LocalPlayer player,Item item) {
+        return countInventory(player,item)>0;
     }
 
     private static int countInventory(LocalPlayer player,Item item) {
@@ -417,56 +448,74 @@ final class LockOnBase {
         return false;
     }
 
+    private record Ingredient(Item item,int grid) {}
     private static final class CraftJob {
-        final Item material;
-        final int[] cells;
+        final java.util.List<Ingredient> ingredients;
         final boolean inventory;
-        int source=-1,progress,step;
-        CraftJob(Item material,int[] cells,boolean inventory){
-            this.material=material;this.cells=cells;this.inventory=inventory;
+        int progress, action, source=-1, outputWait;
+        CraftJob(java.util.List<Ingredient> ingredients,boolean inventory){
+            this.ingredients=ingredients;
+            this.inventory=inventory;
         }
     }
 
-    /**
-     * Craft one recipe using real slot inputs; one click per call. Requires
-     * one inventory stack of 4, 8, or 9 ingredients, respectively. When the
-     * result has been shifted into inventory, the job is complete.
-     */
     private static boolean craft(Minecraft mc,Item material,int[] cells,boolean portable){
+        return craft(mc,material,cells,null,new int[0],portable);
+    }
+
+    /**
+     * Vanilla crafting with 1-2 real ingredient types and menu clicks.
+     * Supports wood/sticks/chests/furnaces and stone-pickaxe advancement.
+     */
+    private static boolean craft(Minecraft mc,Item first,int[] firstSlots,
+                                 Item second,int[] secondSlots,boolean portable) {
         AbstractContainerMenu menu=mc.player.containerMenu;
         if(portable && !(menu instanceof InventoryMenu)) return false;
         if(!portable && !(menu instanceof CraftingMenu))return false;
-        if(material==null && craftJob==null)return false;
+        if(first==null && craftJob==null)return false;
         if(craftJob==null){
-            // Never overwrite existing crafting grids.
-            for(int i:cells)if(!menu.getSlot(i).getItem().isEmpty())return false;
-            int src=findInventorySlot(menu,portable?9:10,
-                stack->stack.is(material)&&stack.getCount()>=cells.length);
-            if(src<0)return false;
-            craftJob=new CraftJob(material,cells,portable);
-            craftJob.source=src;
+            java.util.List<Ingredient> ingredients=new java.util.ArrayList<>();
+            for(int i:firstSlots)ingredients.add(new Ingredient(first,i));
+            if(second!=null)
+                for(int i:secondSlots)ingredients.add(new Ingredient(second,i));
+            for(Ingredient ing:ingredients)
+                if(!menu.getSlot(ing.grid()).getItem().isEmpty()){
+                    status="Crafting grid is not empty; won't overwrite user items";
+                    return false;
+                }
+            craftJob=new CraftJob(java.util.List.copyOf(ingredients),portable);
         }
         CraftJob job=craftJob;
-        if(job.progress==0){
-            input(mc,job.source,0,ContainerInput.PICKUP);
-            job.progress++;
+        if(job.progress<job.ingredients.size()){
+            Ingredient ing=job.ingredients.get(job.progress);
+            if(job.action==0){
+                job.source=findInventorySlot(menu,portable?9:10,
+                    stack->stack.is(ing.item()));
+                if(job.source<0){
+                    craftJob=null;
+                    status="Missing crafting ingredient "+ing.item();
+                    return false;
+                }
+                input(mc,job.source,0,ContainerInput.PICKUP);
+                job.action=1;
+            }else if(job.action==1){
+                input(mc,ing.grid(),1,ContainerInput.PICKUP);
+                job.action=2;
+            }else{
+                input(mc,job.source,0,ContainerInput.PICKUP);
+                job.action=0;
+                job.progress++;
+            }
             return false;
         }
-        if(job.progress<=job.cells.length){
-            input(mc,job.cells[job.progress-1],1,ContainerInput.PICKUP);
-            job.progress++;
+        if(menu.getSlot(0).getItem().isEmpty()){
+            if(++job.outputWait>80){
+                craftJob=null;
+                status="Recipe not available for gathered ingredients";
+            }
             return false;
         }
-        if(job.progress==job.cells.length+1){
-            input(mc,job.source,0,ContainerInput.PICKUP);
-            job.progress++;
-            return false;
-        }
-        if(job.progress==job.cells.length+2){
-            input(mc,0,0,ContainerInput.QUICK_MOVE);
-            job.progress++;
-            return false;
-        }
+        input(mc,0,0,ContainerInput.QUICK_MOVE);
         craftJob=null;
         return true;
     }
