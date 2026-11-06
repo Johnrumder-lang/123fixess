@@ -24,7 +24,7 @@ public record LockOnPlayerPositionsPayload(
         new Type<>(Identifier.fromNamespaceAndPath("lockon", "players"));
 
     public static final StreamCodec<RegistryFriendlyByteBuf, LockOnPlayerPositionsPayload> CODEC =
-        StreamCodec.of(LockOnPlayerPositionsPayload::encode, LockOnPlayerPositionsPayload::decode);
+        StreamCodec.of((buffer, payload) -> payload.encode(buffer), LockOnPlayerPositionsPayload::decode);
 
     private void encode(RegistryFriendlyByteBuf buffer) {
         buffer.writeInt(1);
