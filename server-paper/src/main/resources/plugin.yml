@@ -1,5 +1,5 @@
 name: LockOnPlayerFeed
-version: '2.8.0'
+version: '2.9.0'
 main: lockon.paper.LockOnPlayerFeed
 api-version: '26.3'
 description: Opt-in, permission-gated live player coordinates for the LockOn Fabric overlay.

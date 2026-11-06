@@ -8,5 +8,6 @@
   "key.lockon.settings": "LockOn: Einstellungen öffnen",
   "key.lockon.stats": "LockOn: PvP-Trainingsstatistik",
   "key.lockon.teleport": "LockOn: zum Spieler teleportieren (Serverberechtigung erforderlich)",
-  "key.lockon.mine_target": "LockOn: anvisierten Block abbauen (B erforderlich)"
+  "key.lockon.mine_target": "LockOn: anvisierten Block abbauen (B erforderlich)",
+  "key.lockon.survival": "LockOn: Survival-Stollenbau und Monsterabwehr (P)"
 }

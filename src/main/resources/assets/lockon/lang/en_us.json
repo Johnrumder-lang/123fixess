@@ -8,5 +8,6 @@
   "key.lockon.settings": "LockOn: open settings",
   "key.lockon.stats": "LockOn: combat practice statistics",
   "key.lockon.teleport": "LockOn: teleport to player (server permission required)",
-  "key.lockon.mine_target": "LockOn: mine aimed block (requires B)"
+  "key.lockon.mine_target": "LockOn: mine aimed block (requires B)",
+  "key.lockon.survival": "LockOn: survival strip mining and hostile defense (P)"
 }

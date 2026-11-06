@@ -22,6 +22,12 @@ public final class LockOnSettings {
     private static final int DEFAULT_REACH_TENTHS = 30;
     private static int reachTenths = DEFAULT_REACH_TENTHS;
     private static boolean tracePlayers;
+    private static int stripLength = 32;
+    private static boolean survivalFightMobs = true;
+    private static boolean survivalAutoEat = true;
+    private static boolean survivalStore = true;
+    private static boolean survivalSmelt = true;
+    private static boolean survivalCompact = true;
     private static boolean traceServerPlayers;
     private static boolean traceChests;
     private static boolean traceBeds;
@@ -38,6 +44,12 @@ public final class LockOnSettings {
     private LockOnSettings() {}
 
     public static double attackReach() { return reachTenths / 10.0; }
+    public static int stripLength() { return stripLength; }
+    public static boolean survivalFightMobs() { return survivalFightMobs; }
+    public static boolean survivalAutoEat() { return survivalAutoEat; }
+    public static boolean survivalStore() { return survivalStore; }
+    public static boolean survivalSmelt() { return survivalSmelt; }
+    public static boolean survivalCompact() { return survivalCompact; }
     public static boolean tracePlayers() { return tracePlayers; }
     public static boolean traceServerPlayers() { return traceServerPlayers; }
     public static boolean traceChests() { return traceChests; }
@@ -118,6 +130,13 @@ public final class LockOnSettings {
             // to the vanilla survival sword reach (3.0), without ever
             // attempting to extend the server's permitted hit distance.
             setReach(Double.parseDouble(p.getProperty("attackReach", "3.0")));
+            stripLength = Math.max(8, Math.min(64,
+                Integer.parseInt(p.getProperty("stripLength", "32"))));
+            survivalFightMobs = Boolean.parseBoolean(p.getProperty("survivalFightMobs", "true"));
+            survivalAutoEat = Boolean.parseBoolean(p.getProperty("survivalAutoEat", "true"));
+            survivalStore = Boolean.parseBoolean(p.getProperty("survivalStore", "true"));
+            survivalSmelt = Boolean.parseBoolean(p.getProperty("survivalSmelt", "true"));
+            survivalCompact = Boolean.parseBoolean(p.getProperty("survivalCompact", "true"));
             tracePlayers = Boolean.parseBoolean(p.getProperty("tracePlayers", "false"));
             traceServerPlayers = Boolean.parseBoolean(p.getProperty("traceServerPlayers", "false"));
             traceChests = Boolean.parseBoolean(p.getProperty("traceChests", "false"));
@@ -139,6 +158,12 @@ public final class LockOnSettings {
         Properties p = new Properties();
         p.setProperty("settingsVersion", "3");
         p.setProperty("attackReach", String.format(Locale.ROOT, "%.1f", attackReach()));
+        p.setProperty("stripLength", Integer.toString(stripLength));
+        p.setProperty("survivalFightMobs", Boolean.toString(survivalFightMobs));
+        p.setProperty("survivalAutoEat", Boolean.toString(survivalAutoEat));
+        p.setProperty("survivalStore", Boolean.toString(survivalStore));
+        p.setProperty("survivalSmelt", Boolean.toString(survivalSmelt));
+        p.setProperty("survivalCompact", Boolean.toString(survivalCompact));
         p.setProperty("tracePlayers", Boolean.toString(tracePlayers));
         p.setProperty("traceServerPlayers", Boolean.toString(traceServerPlayers));
         p.setProperty("traceChests", Boolean.toString(traceChests));
@@ -176,6 +201,27 @@ public final class LockOnSettings {
             .setMax(3.0)
             .setSaveConsumer(LockOnSettings::setReach)
             .build());
+        ConfigCategory survive = builder.getOrCreateCategory(Component.literal("Survival Mining"));
+        survive.addEntry(entries.startIntField(
+                Component.literal("Strip length (8-64 blocks)"), stripLength)
+            .setDefaultValue(32).setMin(8).setMax(64)
+            .setSaveConsumer(v -> stripLength = Math.max(8, Math.min(64, v)))
+            .build());
+        survive.addEntry(entries.startBooleanToggle(
+                Component.literal("Defend against hostile mobs"), survivalFightMobs)
+            .setDefaultValue(true).setSaveConsumer(v -> survivalFightMobs = v).build());
+        survive.addEntry(entries.startBooleanToggle(
+                Component.literal("Auto-eat safe hotbar food"), survivalAutoEat)
+            .setDefaultValue(true).setSaveConsumer(v -> survivalAutoEat = v).build());
+        survive.addEntry(entries.startBooleanToggle(
+                Component.literal("Store collected materials in base chest"), survivalStore)
+            .setDefaultValue(true).setSaveConsumer(v -> survivalStore = v).build());
+        survive.addEntry(entries.startBooleanToggle(
+                Component.literal("Smelt ores at base furnace"), survivalSmelt)
+            .setDefaultValue(true).setSaveConsumer(v -> survivalSmelt = v).build());
+        survive.addEntry(entries.startBooleanToggle(
+                Component.literal("Craft 9 materials into blocks"), survivalCompact)
+            .setDefaultValue(true).setSaveConsumer(v -> survivalCompact = v).build());
         ConfigCategory tracers = builder.getOrCreateCategory(Component.literal("Tracers"));
         tracers.addEntry(entries.startBooleanToggle(
                 Component.literal("Lines to other players (red)"), tracePlayers)

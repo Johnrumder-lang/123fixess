@@ -49,7 +49,7 @@ public final class LockOnClient implements ClientModInitializer {
     private static boolean ownsMovement;
     private static UUID targetId;
     private static ClientLevel previousLevel;
-    private static KeyMapping toggleKey, selectKey, chaseKey, critKey, mineKey, modeKey, settingsKey, statsKey, manualMineKey;
+    private static KeyMapping toggleKey, selectKey, chaseKey, critKey, mineKey, modeKey, settingsKey, statsKey, manualMineKey, survivalKey;
     private static UUID trackedVelocityTarget;
     private static Vec3 filteredVelocity = new Vec3(0.0, 0.0, 0.0);
     private static UUID observedHurtTarget;
@@ -105,6 +105,7 @@ public final class LockOnClient implements ClientModInitializer {
         settingsKey = key("key.lockon.settings", InputConstants.KEY_O);
         statsKey = key("key.lockon.stats", InputConstants.KEY_U);
         manualMineKey = key("key.lockon.mine_target", InputConstants.KEY_N);
+        survivalKey = key("key.lockon.survival", InputConstants.KEY_P);
         ClientTickEvents.END_CLIENT_TICK.register(LockOnClient::tick);
         // Attack packets belong in client gameplay ticks, not in HUD render frames.
         // Rendering can run between vanilla movement packets, so a visual
@@ -119,6 +120,8 @@ public final class LockOnClient implements ClientModInitializer {
     private static void tick(Minecraft mc) {
         ticks++;
         if (mc.level != previousLevel) {
+            if (LockOnSurvival.enabled())
+                LockOnSurvival.stop(mc, "World changed: survival mode stopped");
             previousLevel = mc.level;
             enabled = false;
             targetId = null;
@@ -140,9 +143,32 @@ public final class LockOnClient implements ClientModInitializer {
             lastHurtSignalTick = -1000;
         }
         LocalPlayer me = mc.player;
-        if (me == null || mc.level == null || mc.gui.screen() != null) {
+        if (me == null || mc.level == null) {
             drainKeys();
             stopActions(mc);
+            return;
+        }
+        if (mc.gui.screen() != null && !LockOnSurvival.managingContainer()) {
+            drainKeys();
+            stopActions(mc);
+            return;
+        }
+
+        while (survivalKey.consumeClick()) {
+            if (!LockOnSurvival.enabled()) {
+                // Survival and PvP automation never take control at once.
+                enabled = false;
+                targetId = null;
+                stopActions(mc);
+                resetAttackSchedule();
+            }
+            LockOnSurvival.toggle(mc);
+        }
+        if (LockOnSurvival.enabled()) {
+            while (statsKey.consumeClick())
+                hint(mc, "Survival: " + LockOnSurvival.status()
+                    + " | Base: " + LockOnBase.status());
+            LockOnSurvival.tick(mc);
             return;
         }
 
@@ -286,6 +312,7 @@ public final class LockOnClient implements ClientModInitializer {
         while (settingsKey.consumeClick()) {}
         while (statsKey.consumeClick()) {}
         while (manualMineKey.consumeClick()) {}
+        while (survivalKey.consumeClick()) {}
     }
 
     private static void resetTracking() {
