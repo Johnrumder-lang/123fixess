@@ -47,7 +47,16 @@ public final class LockOnClient implements ClientModInitializer {
     private static boolean ownsMovement;
     private static UUID targetId;
     private static ClientLevel previousLevel;
-    private static KeyMapping toggleKey, selectKey, chaseKey, critKey, mineKey, modeKey, settingsKey;
+    private static KeyMapping toggleKey, selectKey, chaseKey, critKey, mineKey, modeKey, settingsKey, statsKey;
+    private static UUID trackedVelocityTarget;
+    private static Vec3 filteredVelocity = new Vec3(0.0, 0.0, 0.0);
+    private static UUID observedHurtTarget;
+    private static int lastObservedHurtTime = -1;
+    private static int attempts;
+    private static int hurtSignals;
+    private static int streak;
+    private static int bestStreak;
+    private static int lastHurtSignalTick = -1000;
     private static int ticks;
     private static int nextPlanAt;
     private static int nextCritJumpAt;
@@ -78,6 +87,7 @@ public final class LockOnClient implements ClientModInitializer {
         mineKey = key("key.lockon.mining", InputConstants.KEY_B);
         modeKey = key("key.lockon.mode", InputConstants.KEY_K);
         settingsKey = key("key.lockon.settings", InputConstants.KEY_O);
+        statsKey = key("key.lockon.stats", InputConstants.KEY_U);
         ClientTickEvents.END_CLIENT_TICK.register(LockOnClient::tick);
         // Rendering runs between client ticks, letting us check the 20-50ms
         // deadline more often than Minecraft's normal 50ms gameplay tick.
@@ -108,6 +118,12 @@ public final class LockOnClient implements ClientModInitializer {
             resetAttackSchedule();
             clearNavigation(mc);
             lastAttackedTarget = null;
+            resetTracking();
+            attempts = 0;
+            hurtSignals = 0;
+            streak = 0;
+            bestStreak = 0;
+            lastHurtSignalTick = -1000;
         }
         LocalPlayer me = mc.player;
         if (me == null || mc.level == null || mc.gui.screen() != null) {
@@ -122,6 +138,11 @@ public final class LockOnClient implements ClientModInitializer {
             mc.gui.setScreen(LockOnSettings.createScreen(mc.gui.screen()));
             return;
         }
+        while (statsKey.consumeClick()) {
+            hint(mc, "Combat practice: " + attempts + " attacks, "
+                + hurtSignals + " observed hurt animations, streak "
+                + streak + " (best " + bestStreak + ")");
+        }
         while (toggleKey.consumeClick()) {
             enabled = !enabled;
             if (!enabled) {
@@ -135,6 +156,7 @@ public final class LockOnClient implements ClientModInitializer {
         while (selectKey.consumeClick()) {
             if (targetId != null) {
                 targetId = null;
+                resetTracking();
                 resetAttackSchedule();
                 lastAttackTick = -1000;
                 lastAttackedTarget = null;
@@ -181,6 +203,7 @@ public final class LockOnClient implements ClientModInitializer {
 
         // Bow: predictive aim while the user draws and shoots normally.
         // Do not auto-chase while aiming a bow; it spoils projectile shots.
+        updateTracking(target);
         if (bowEquipped) {
             stopActions(mc);
             resetAttackSchedule();
@@ -207,15 +230,51 @@ public final class LockOnClient implements ClientModInitializer {
         while (mineKey.consumeClick()) {}
         while (modeKey.consumeClick()) {}
         while (settingsKey.consumeClick()) {}
+        while (statsKey.consumeClick()) {}
+    }
+
+    private static void resetTracking() {
+        trackedVelocityTarget = null;
+        observedHurtTarget = null;
+        filteredVelocity = new Vec3(0.0, 0.0, 0.0);
+        lastObservedHurtTime = -1;
+    }
+
+    private static void updateTracking(Player target) {
+        UUID id = target.getUUID();
+        if (!id.equals(trackedVelocityTarget)) {
+            trackedVelocityTarget = id;
+            observedHurtTarget = id;
+            filteredVelocity = target.getDeltaMovement();
+            lastObservedHurtTime = target.hurtTime;
+            streak = 0;
+            return;
+        }
+        Vec3 speed = target.getDeltaMovement();
+        // Low-pass filtering reduces jitter from packet interpolation.
+        filteredVelocity = filteredVelocity.scale(0.60).add(speed.scale(0.40));
+
+        if (id.equals(observedHurtTarget)) {
+            // These are observations, NOT server-verified hit confirmations.
+            // Another attacker or environmental damage can also cause them.
+            if (target.hurtTime > lastObservedHurtTime
+                && ticks - lastAttackTick <= 8 && lastAttackTick >= 0) {
+                hurtSignals++;
+                streak = ticks - lastHurtSignalTick <= 26 ? streak + 1 : 1;
+                bestStreak = Math.max(bestStreak, streak);
+                lastHurtSignalTick = ticks;
+            }
+            lastObservedHurtTime = target.hurtTime;
+        }
     }
 
     private static void aimAt(LocalPlayer me, Player target) {
         Vec3 eye = me.getEyePosition();
         double distance = me.distanceTo(target);
-        Vec3 vel = target.getDeltaMovement();
-        // In actual melee range, center the ray INSIDE the hitbox.
-        // Predictive leading is only useful while approaching from a distance.
-        double prediction = distance < 3.8 ? 0.0 : Mth.clamp(distance * 0.10, 0, 0.9);
+        Vec3 vel = filteredVelocity;
+        // For close-range strikes, avoid leading outside the enemy hitbox.
+        // At longer distances, use a smoothed velocity sample.
+        double prediction = CombatTactics.predictionTicks(distance, attackReach());
         Vec3 center = new Vec3(
             target.getX() + Mth.clamp(vel.x * prediction, -0.13, 0.13),
             target.getY() + target.getBbHeight() * 0.70,
@@ -241,7 +300,7 @@ public final class LockOnClient implements ClientModInitializer {
         // Approximate flight time in ticks at a fully drawn vanilla bow's speed.
         // Draw the bow fully for best compensation, and account for target movement.
         double flightTicks = Math.min(25.0, Math.max(1.0, Math.hypot(delta.x, delta.z) / ARROW_SPEED));
-        Vec3 speed = target.getDeltaMovement();
+        Vec3 speed = filteredVelocity;
         Vec3 lead = new Vec3(
             Mth.clamp(speed.x * flightTicks * 0.85, -4.0, 4.0),
             Mth.clamp(speed.y * flightTicks * 0.30, -1.0, 1.0),
@@ -342,6 +401,7 @@ public final class LockOnClient implements ClientModInitializer {
         }
 
         mc.gameMode.attack(me, target);
+        attempts++;
         me.swing(InteractionHand.MAIN_HAND, me.getMainHandItem().getAttackAnimation(), false);
         lastAttackTick = ticks;
         lastAttackedTarget = target.getUUID();
@@ -392,35 +452,33 @@ public final class LockOnClient implements ClientModInitializer {
         if (d < Math.max(3.05, attackReach() - 0.12) && sameHeight && !oneBlockAhead && me.hasLineOfSight(target)) {
             stopMining(mc);
             nextStep = null;
-            // Small alternating orbit and measured backing off. Never chase into a hole.
-            boolean left = ((ticks / 24) & 1) == 0;
+            // Adaptive radial tracking. Follow knockback without orbiting
+            // sideways mid-combo; protect the forward path from cliff edges.
+            boolean preferLeft = ((ticks / 24) & 1) == 0;
             double yaw = Math.toRadians(me.getYRot());
-            double sideX = left ? -Math.cos(yaw) : Math.cos(yaw);
-            double sideZ = left ? -Math.sin(yaw) : Math.sin(yaw);
             boolean leftSafe = safeSide(mc.level, me, -Math.cos(yaw), -Math.sin(yaw));
             boolean rightSafe = safeSide(mc.level, me, Math.cos(yaw), Math.sin(yaw));
-            if (left && !leftSafe) left = false;
-            else if (!left && !rightSafe) left = true;
-            boolean airborneOpponent = !target.onGround() || target.getDeltaMovement().y > 0.08;
-            // For a combo, prioritize forward momentum instead of side
-            // strafing: closing on knockback is what maintains pressure.
+            boolean airborneOpponent = !target.onGround()
+                || target.getDeltaMovement().y > 0.08;
             boolean combo = comboWindow(me, target);
-            double desiredGap = Math.max(1.65, attackReach() - 0.55);
-            boolean forward = d > (combo || airborneOpponent ? Math.max(1.65, desiredGap - 0.2) : desiredGap)
-                && Navigator.safeForward(mc.level, me, dxToTarget, dzToTarget);
-            boolean back = !combo && !airborneOpponent && d < 1.30;
-            boolean orbit = !combo && d < 2.6 && !forward
-                && (left ? leftSafe : rightSafe);
+            double radialSpeed = 0.0;
+            if (d > 0.01) {
+                Vec3 relative = filteredVelocity.subtract(me.getDeltaMovement());
+                radialSpeed = (relative.x * dxToTarget + relative.z * dzToTarget) / d;
+            }
+            boolean safeForward = Navigator.safeForward(
+                mc.level, me, dxToTarget, dzToTarget);
             boolean inCritWindow = ticks - lastCritJumpTick <= 8 && !me.onGround();
-            boolean sprintNow = forward && sprintResetTicks == 0
-                && me.onGround() && !inCritWindow;
-            setMovement(mc, forward, back, orbit && left, orbit && !left, sprintNow);
-            // Force a real sprint off -> on transition. Forward motion
-            // remains pressed while sprint is reset for the next hit.
+            CombatTactics.Move plan = CombatTactics.move(
+                d, attackReach(), radialSpeed, combo, airborneOpponent,
+                safeForward, leftSafe, rightSafe, preferLeft,
+                me.onGround(), sprintResetTicks > 0, inCritWindow);
+            setMovement(mc, plan.forward(), plan.backward(),
+                plan.left(), plan.right(), plan.sprint());
             if (sprintResetTicks > 0) {
                 me.setSprinting(false);
                 sprintResetTicks--;
-            } else if (sprintNow && !me.isSprinting()) {
+            } else if (plan.sprint() && !me.isSprinting()) {
                 me.setSprinting(true);
             }
             return;
@@ -606,6 +664,7 @@ public final class LockOnClient implements ClientModInitializer {
             hint(mc, "No player visible near the crosshair");
         } else {
             targetId = closest.getUUID();
+            resetTracking();
             lastAttackTick = -1000;
             lastAttackedTarget = null;
             resetAttackSchedule();
