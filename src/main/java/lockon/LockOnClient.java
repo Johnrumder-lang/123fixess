@@ -7,6 +7,7 @@ import net.minecraft.world.item.Items;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.keymapping.v1.KeyMappingHelper;
+import net.fabricmc.fabric.api.client.rendering.v1.world.WorldRenderEvents;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
@@ -31,7 +32,8 @@ public final class LockOnClient implements ClientModInitializer {
     private static final double BOW_TRACK_RANGE = 54.0;
     private static final double ARROW_SPEED = 3.0;
     private static final double ARROW_GRAVITY = 0.05;
-    private static int meleeReadyAt = -1;
+    // Monotonic deadline: random 20-50 ms after fully charged.
+    private static long meleeReadyNanos = -1L;
     private static UUID scheduledTarget;
     private static boolean enabled;
     private static boolean chase = true;
@@ -60,6 +62,19 @@ public final class LockOnClient implements ClientModInitializer {
         critKey = key("key.lockon.criticals", InputConstants.KEY_J);
         mineKey = key("key.lockon.mining", InputConstants.KEY_B);
         ClientTickEvents.END_CLIENT_TICK.register(LockOnClient::tick);
+        // Rendering runs between client ticks, letting us check the 20-50ms
+        // deadline more often than Minecraft's normal 50ms gameplay tick.
+        WorldRenderEvents.START_MAIN.register(context -> {
+            Minecraft mc = Minecraft.getInstance();
+            if (!enabled || targetId == null || mc.level == null || mc.player == null
+                || mc.gui.screen() != null || !mc.player.isAlive()) return;
+            if (mc.player.getMainHandItem().is(Items.BOW)) return;
+            Player target = mc.level.getPlayerByUUID(targetId);
+            if (target != null && target.isAlive() && !target.isSpectator()
+                && mc.player.distanceTo(target) <= TARGET_RANGE) {
+                attack(mc, mc.player, target);
+            }
+        });
     }
 
     private static KeyMapping key(String name, int code) {
@@ -176,7 +191,7 @@ public final class LockOnClient implements ClientModInitializer {
     }
 
     private static void resetAttackSchedule() {
-        meleeReadyAt = -1;
+        meleeReadyNanos = -1L;
         scheduledTarget = null;
     }
 
@@ -219,17 +234,18 @@ public final class LockOnClient implements ClientModInitializer {
             return;
         }
 
-        // Start a random 2-3 tick delay only once for a fully charged
-        // attack. Do NOT restart it every time the target briefly leaves
-        // the ray, or the bot can indefinitely refuse obvious hits.
+        // Start a random 20-50 millisecond delay ONLY ONCE after a fully
+        // charged attack becomes available. Keep the deadline if the target
+        // briefly moves out of reach, and re-check it on render frames too.
         if (scheduledTarget != null && !scheduledTarget.equals(target.getUUID())) {
             resetAttackSchedule();
         }
-        if (meleeReadyAt < 0) {
+        if (meleeReadyNanos < 0L) {
             scheduledTarget = target.getUUID();
-            meleeReadyAt = ticks + 2 + ThreadLocalRandom.current().nextInt(2);
+            meleeReadyNanos = System.nanoTime()
+                + ThreadLocalRandom.current().nextLong(20_000_000L, 50_000_001L);
         }
-        if (ticks < meleeReadyAt) return;
+        if (System.nanoTime() < meleeReadyNanos) return;
 
         // Keep the attack ready when just outside reach; hit immediately
         // on re-entry. Still enforce line of sight and actual hitbox aim.
