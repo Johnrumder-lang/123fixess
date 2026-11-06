@@ -1,1 +1,5 @@
-{"key.lockon.toggle":"LockOn: toggle","key.lockon.target":"LockOn: select/clear target"}
+{
+  "key.lockon.toggle": "LockOn: toggle",
+  "key.lockon.target": "LockOn: select/clear target",
+  "key.lockon.movement": "LockOn: chase/strafe assist"
+}

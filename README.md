@@ -1,24 +1,27 @@
-# LockOn for Minecraft 26.3 (Fabric)
+# LockOn v1.3.0 — Minecraft 26.3 / Fabric
 
-## LockOn-26.3-v1.2.1.jar — not verified yet
+Client-only lock-on mod for **consensual testing on a private PvP server**. Requires Minecraft 26.3, Java 25, Fabric Loader and matching Fabric API.
 
-The original experimental version 1.2.0 crashed because `InputConstants.Type.KEYSYM` was removed in Minecraft 26.3. This branch updates keyboard mapping and screen access for 26.3, but the code must still pass a real Fabric Loom build.
+## Download
+**Install `LockOn-26.3-v1.3.0.jar` only after [the GitHub Actions build](https://github.com/Johnrumder-lang/123fixess/actions/workflows/build.yml) succeeds.** If the file doesn't exist in this branch yet, it is not ready. Do not use the old untested 1.2.0 JAR.
 
-**Do not use the old `LockOn-26.3.jar`.** Remove it from your Modrinth profile.
+## Changes in v1.3.0
+- Predictive, faster tracking that follows moving players.
+- Sword attacks target the actual entity hitbox rather than depending on a stale raycast; they require line of sight, **normal 3-block sword reach** and the **full attack cooldown**.
+- New **optional movement assist** chases, strafes and briefly releases sprint between attacks to try to keep combos. This is not pathfinding and may walk into walls, hazards or off ledges. Test somewhere safe.
+- The goal is reliable practice, not guaranteed wins. Server lag, knockback, ping and defense still matter.
 
-[Build using GitHub Actions](https://github.com/Johnrumder-lang/123fixess/actions/workflows/build.yml) — select the `lockon-fixed` branch in **Run workflow**. A successful run produces `LockOn-26.3-v1.2.1.jar` in the branch and as a workflow artifact. If this file is absent, no verified build has been produced.
+## Controls
+- **R** = toggle lock-on.
+- **G** = select the visible player near the crosshair; G again clears them.
+- **H** = toggle automatic chase + strafe (on by default, only acts while R is enabled and a target is selected).
+- **Turn R off before manual movement**. Automatic movement temporarily controls W/A/S/D and sprint. If manual keys feel stuck, release and press them again.
 
-### Controls
-- **R**: Toggle on/off
-- **G**: Choose/clear target near crosshair
-- **Sword**: Only attacks after the vanilla weapon cooldown reaches 100%; no 20 CPS spam
+## Install
+1. Open Modrinth App → your Minecraft 26.3 Fabric instance → Open folder.
+2. Remove older LockOn JARs from `mods/`, particularly `LockOn-26.3-v1.2.1.jar`.
+3. Put `LockOn-26.3-v1.3.0.jar` into `mods/` and launch.
+4. Press G facing a friend, then R to activate. Toggle H to use or disable combo movement.
 
-### Installation
-Use a Minecraft 26.3 / Fabric instance with matching Fabric API. Place the successfully compiled `LockOn-26.3-v1.2.1.jar` in the profile's `mods` folder; remove the old JAR first. Use only on private servers whose owners and players agree to it.
-
-### Manual source build
-Requires JDK 25 and Gradle 9.6.0:
-```sh
-gradle build
-```
-The normal output is `build/libs/lockon-1.2.1.jar`. The workflow renames it to `LockOn-26.3-v1.2.1.jar`.
+## Build
+With JDK 25 + Gradle 9.6.0, run `gradle build`; the normal compiled output is `build/libs/lockon-1.3.0.jar`. GitHub Actions publishes a version-named copy if compilation succeeds.
