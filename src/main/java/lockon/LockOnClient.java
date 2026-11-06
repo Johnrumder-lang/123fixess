@@ -107,7 +107,7 @@ public final class LockOnClient implements ClientModInitializer {
         HitResult hit = me.raycastHitResult(1.0f, me);
         if (!(hit instanceof EntityHitResult entityHit) || entityHit.getEntity() != target) return;
         mc.gameMode.attack(me, target);
-        me.swing(InteractionHand.MAIN_HAND);
+        // 26.3 swing API requires the held item's animation and a sync flag.\n        me.swing(InteractionHand.MAIN_HAND, me.getMainHandItem().getAttackAnimation(), false);
     }
 
     private static void pickTargetNearestToCrosshair(Minecraft mc) {
