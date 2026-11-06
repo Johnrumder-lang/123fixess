@@ -1,18 +1,11 @@
-# LockOn for Minecraft 26.3 (Fabric)
+# LockOn Fabric 26.3
 
-**Experimental JAR — not verified to load in Minecraft.**
+## Important: original JAR causes a Minecraft crash
 
-[Download LockOn-26.3.jar](https://github.com/Johnrumder-lang/123fixess/raw/refs/heads/main/LockOn-26.3.jar)
+The original experimental `LockOn-26.3.jar` from the `lockon-download` branch was compiled against placeholder APIs and **does not work** on Minecraft 26.3. It fails with `NoSuchFieldError: InputConstants.Type.KEYSYM`.
 
-This client-side test mod is intended for consensual private-server use. **R** toggles LockOn and **G** selects or clears a player near the crosshair. It attempts sword attacks only at full weapon cooldown, rather than fixed 20 CPS.
+I prepared corrected 1.2.1 source on the [lockon-fixed branch](https://github.com/Johnrumder-lang/123fixess/tree/lockon-fixed). Changes include SDL input types and keycodes and Minecraft 26.3's new `mc.gui.screen()` access.
 
-### Installation
-1. Download `LockOn-26.3.jar` from the link above.
-2. Open your Minecraft 26.3 Fabric instance in the Modrinth App.
-3. Ensure Fabric API is installed for your version.
-4. Open the instance's `mods` folder, place the JAR there and launch.
+For a **properly compiled** JAR, open [GitHub Actions](https://github.com/Johnrumder-lang/123fixess/actions/workflows/build.yml), select **Build LockOn Fabric 26.3**, click **Run workflow**, choose **lockon-fixed**, and run it. The workflow uses Java 25, Gradle 9.6, Minecraft 26.3, and Fabric API 0.165.2+26.3. If successful it adds `LockOn-26.3-fixed.jar` to that branch and also uploads the JAR as a workflow artifact. Only install it after the build succeeds. If the job fails, inspect the compilation errors instead.
 
-### Compatibility warning
-The uploaded JAR is the **unverified earlier test build** compiled using API placeholders (not the official Fabric/Minecraft toolchain). Its ZIP structure is valid, but it **may not load or work in the game**. This is *not* a verified release. For a proper Fabric Loom build, see the `source/` directory, use Java JDK 25 and resolve any API incompatibilities before running `gradle build`.
-
-Avoid working inside the protected WhatsApp Desktop transfer directory on Windows; copy files to a normal folder first.
+In Modrinth, remove the old JAR before adding the new one. R toggles; G selects/clears target. Attacks occur only at the fully charged sword cooldown. Use only on consenting private PvP testing servers.
