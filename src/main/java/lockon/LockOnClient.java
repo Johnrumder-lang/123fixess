@@ -33,7 +33,9 @@ public final class LockOnClient implements ClientModInitializer {
     private static final double BOW_TRACK_RANGE = 54.0;
     private static final double ARROW_SPEED = 3.0;
     private static final double ARROW_GRAVITY = 0.05;
-    // Monotonic deadline: random 20-50 ms after fully charged.
+    // Monotonic deadline: random 20-50 ms after the chosen hit threshold.
+    // Combo follow-ups require >=86% charge for sprint knockback; openers
+    // and ordinary hits prefer the full 100% cooldown.
     private static long meleeReadyNanos = -1L;
     private static UUID scheduledTarget;
     private static boolean enabled;
@@ -50,6 +52,11 @@ public final class LockOnClient implements ClientModInitializer {
     private static int nextCritJumpAt;
     private static int lastCritJumpTick = -1000;
     private static int lastAttackTick = -1000;
+    // A connected sword contact offers a brief opportunity to use an
+    // earlier sprint-knockback follow-up instead of waiting for full charge.
+    private static final float COMBO_ATTACK_CHARGE = 0.86f;
+    private static final int COMBO_WINDOW_TICKS = 22;
+    private static final int MIN_COMBO_ATTACK_TICKS = 8;
     private static int sprintResetTicks;
     private static int navigationJumpUntil = -1;
     private static int lastNavigationJumpTick = -1000;
@@ -225,19 +232,30 @@ public final class LockOnClient implements ClientModInitializer {
         me.setXRot(Mth.clamp(me.getXRot() + (pitch - me.getXRot()) * 0.94f, -90, 90));
     }
 
+    private static boolean comboWindow(LocalPlayer me, Player target) {
+        int elapsed = ticks - lastAttackTick;
+        return chase && elapsed >= 0 && elapsed <= COMBO_WINDOW_TICKS
+            && me.distanceTo(target) <= 4.6;
+    }
+
     private static void attack(Minecraft mc, LocalPlayer me, Player target) {
         if (mc.gameMode == null || me.isUsingItem()
             || !me.getMainHandItem().is(ItemTags.SWORDS) || miningPos != null) {
             resetAttackSchedule();
             return;
         }
-        if (ticks - lastAttackTick < 2 || me.getAttackStrengthScale(0.0f) < 0.999f) {
-            return;
-        }
+        // Sprint-knockback and crits in Java require about 84.8% charge.
+        // Aim slightly higher (86%) to favor quick combos without producing
+        // a stream of weak hits. Outside a recent combo, wait for full charge.
+        boolean combo = comboWindow(me, target);
+        float requiredCharge = combo ? COMBO_ATTACK_CHARGE : 0.999f;
+        int elapsed = ticks - lastAttackTick;
+        if (elapsed < (combo ? MIN_COMBO_ATTACK_TICKS : 2)
+            || me.getAttackStrengthScale(0.0f) < requiredCharge) return;
 
-        // Start a random 20-50 millisecond delay ONLY ONCE after a fully
-        // charged attack becomes available. Keep the deadline if the target
-        // briefly moves out of reach, and re-check it on render frames too.
+        // Preserve the randomized 20-50 ms delay after the appropriate
+        // attack threshold, never scheduling it a second time because
+        // the opponent momentarily escaped reach or camera aim.
         if (scheduledTarget != null && !scheduledTarget.equals(target.getUUID())) {
             resetAttackSchedule();
         }
@@ -264,7 +282,8 @@ public final class LockOnClient implements ClientModInitializer {
         // worthwhile only if the opponent is grounded and nearly stationary.
         boolean standingInCritRange = me.distanceTo(target) < 2.20
             && Math.hypot(me.getDeltaMovement().x, me.getDeltaMovement().z) < 0.16;
-        if (criticals && !airborneOpponent && me.onGround() && mc.level != null
+        if (criticals && !combo && !airborneOpponent
+            && !me.isSprinting() && me.onGround() && mc.level != null
             && standingInCritRange && ticks >= nextCritJumpAt
             && Navigator.safeToJump(mc.level, me)) {
             me.setSprinting(false);
@@ -275,10 +294,11 @@ public final class LockOnClient implements ClientModInitializer {
             return;
         }
 
-        // Allow a very short falling-crit window, then hit normally
-        // rather than holding a fully charged sword without attacking.
-        if (criticals && !falling && ticks - lastCritJumpTick < 6 && !airborneOpponent) return;
-        if (falling && criticals) {
+        // Never delay a follow-up sprint hit while waiting for a crit jump.
+        // Falling crits and sprint knockback are separate attack types.
+        if (!combo && criticals && !falling
+            && ticks - lastCritJumpTick < 6 && !airborneOpponent) return;
+        if (!combo && falling && criticals) {
             me.setSprinting(false);
             releaseSprint(mc);
         }
@@ -287,7 +307,17 @@ public final class LockOnClient implements ClientModInitializer {
         me.swing(InteractionHand.MAIN_HAND, me.getMainHandItem().getAttackAnimation(), false);
         lastAttackTick = ticks;
         resetAttackSchedule();
-        sprintResetTicks = airborneOpponent ? 1 : 2;
+
+        // Vanilla cancels sprint on a successful sprint-knockback attack.
+        // Explicitly release it for one movement tick, then reacquire
+        // forward sprint on the next chase tick for a second knockback hit.
+        if (chase) {
+            me.setSprinting(false);
+            releaseSprint(mc);
+            sprintResetTicks = 1;
+        } else {
+            sprintResetTicks = 0;
+        }
     }
 
     private static void chaseTarget(Minecraft mc, LocalPlayer me, Player target) {
@@ -311,13 +341,20 @@ public final class LockOnClient implements ClientModInitializer {
             if (left && !leftSafe) left = false;
             else if (!left && !rightSafe) left = true;
             boolean airborneOpponent = !target.onGround() || target.getDeltaMovement().y > 0.08;
-            // Close the gap quickly after knockback; only orbit once genuinely inside range.
-            boolean forward = d > (airborneOpponent ? 1.82 : 2.22) && sprintResetTicks == 0;
-            boolean back = !airborneOpponent && d < 1.30;
-            boolean orbit = d < 2.6 && !forward && (left ? leftSafe : rightSafe);
+            // For a combo, prioritize forward momentum instead of side
+            // strafing: closing on knockback is what maintains pressure.
+            boolean combo = comboWindow(me, target);
+            boolean forward = d > (combo || airborneOpponent ? 1.65 : 2.22)
+                && sprintResetTicks == 0;
+            boolean back = !combo && !airborneOpponent && d < 1.30;
+            boolean orbit = !combo && d < 2.6 && !forward
+                && (left ? leftSafe : rightSafe);
             boolean inCritWindow = ticks - lastCritJumpTick <= 8 && !me.onGround();
             boolean sprintNow = forward && me.onGround() && !inCritWindow;
             setMovement(mc, forward, back, orbit && left, orbit && !left, sprintNow);
+            // Sprint state must transition false -> true between knockback
+            // contacts; merely holding the key may not reset it in time.
+            if (sprintNow && !me.isSprinting()) me.setSprinting(true);
             if (sprintResetTicks > 0) sprintResetTicks--;
             return;
         }
@@ -453,6 +490,7 @@ public final class LockOnClient implements ClientModInitializer {
         nextStep = null;
         nextPlanAt = 0;
         sprintResetTicks = 0;
+        lastAttackTick = -1000;
         navigationJumpUntil = -1;
         lastNavigationJumpTick = -1000;
     }
