@@ -28,6 +28,7 @@ public final class LockOnSettings {
     private static boolean traceCustomEntities;
     private static int traceDistance = 24;
     private static boolean unlimitedTraceDistance;
+    private static boolean traceServerIndex;
     private static String blockIds = "minecraft:diamond_ore";
     private static String entityIds = "minecraft:zombie";
     private static Set<String> customBlockIds = Set.of("minecraft:diamond_ore");
@@ -43,6 +44,7 @@ public final class LockOnSettings {
     public static boolean traceCustomEntities() { return traceCustomEntities; }
     public static int traceDistance() { return traceDistance; }
     public static boolean unlimitedTraceDistance() { return unlimitedTraceDistance; }
+    public static boolean traceServerIndex() { return traceServerIndex; }
     public static String traceDistanceText() {
         return unlimitedTraceDistance ? "inf" : Integer.toString(traceDistance);
     }
@@ -119,6 +121,7 @@ public final class LockOnSettings {
             traceBeds = Boolean.parseBoolean(p.getProperty("traceBeds", "false"));
             traceCustomBlocks = Boolean.parseBoolean(p.getProperty("traceCustomBlocks", "false"));
             traceCustomEntities = Boolean.parseBoolean(p.getProperty("traceCustomEntities", "false"));
+            traceServerIndex = Boolean.parseBoolean(p.getProperty("traceServerIndex", "false"));
             setTraceDistanceText(p.getProperty("traceDistance", "24"));
             blockIds = p.getProperty("tracerBlockIds", "minecraft:diamond_ore");
             entityIds = p.getProperty("tracerEntityIds", "minecraft:zombie");
@@ -138,6 +141,7 @@ public final class LockOnSettings {
         p.setProperty("traceBeds", Boolean.toString(traceBeds));
         p.setProperty("traceCustomBlocks", Boolean.toString(traceCustomBlocks));
         p.setProperty("traceCustomEntities", Boolean.toString(traceCustomEntities));
+        p.setProperty("traceServerIndex", Boolean.toString(traceServerIndex));
         p.setProperty("traceDistance", traceDistanceText());
         p.setProperty("tracerBlockIds", blockIds);
         p.setProperty("tracerEntityIds", entityIds);
@@ -210,6 +214,12 @@ public final class LockOnSettings {
                 entityIds = v;
                 customEntityIds = parseIds(v);
             })
+            .build());
+        tracers.addEntry(entries.startBooleanToggle(
+                Component.literal("Administrator world index (saved blocks, requires TSV export)"),
+                traceServerIndex)
+            .setDefaultValue(false)
+            .setSaveConsumer(v -> traceServerIndex = v)
             .build());
         tracers.addEntry(entries.startBooleanToggle(
                 Component.literal("Unlimited tracer distance (LOADED chunks/entities only)"),
