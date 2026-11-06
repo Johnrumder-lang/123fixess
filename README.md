@@ -1,11 +1,11 @@
-# LockOn Fabric 26.3
+# LockOn — Minecraft 26.3 / Fabric
 
-## Important: original JAR causes a Minecraft crash
+## Versioned JAR: `LockOn-26.3-v1.2.1.jar` (build pending)
 
-The original experimental `LockOn-26.3.jar` from the `lockon-download` branch was compiled against placeholder APIs and **does not work** on Minecraft 26.3. It fails with `NoSuchFieldError: InputConstants.Type.KEYSYM`.
+The previous `LockOn-26.3.jar` (mod version 1.2.0) **crashes Minecraft 26.3** with `NoSuchFieldError: InputConstants.Type.KEYSYM`. Remove it from the Modrinth instance's `mods` directory. It was built against placeholder APIs.
 
-I prepared corrected 1.2.1 source on the [lockon-fixed branch](https://github.com/Johnrumder-lang/123fixess/tree/lockon-fixed). Changes include SDL input types and keycodes and Minecraft 26.3's new `mc.gui.screen()` access.
+[Corrected source (lockon-fixed)](https://github.com/Johnrumder-lang/123fixess/tree/lockon-fixed) includes updated keyboard API usage. This source still needs to compile successfully against the actual game APIs.
 
-For a **properly compiled** JAR, open [GitHub Actions](https://github.com/Johnrumder-lang/123fixess/actions/workflows/build.yml), select **Build LockOn Fabric 26.3**, click **Run workflow**, choose **lockon-fixed**, and run it. The workflow uses Java 25, Gradle 9.6, Minecraft 26.3, and Fabric API 0.165.2+26.3. If successful it adds `LockOn-26.3-fixed.jar` to that branch and also uploads the JAR as a workflow artifact. Only install it after the build succeeds. If the job fails, inspect the compilation errors instead.
+To build it on GitHub: [Actions → Build LockOn Fabric 26.3](https://github.com/Johnrumder-lang/123fixess/actions/workflows/build.yml) → **Run workflow** → select **lockon-fixed** → **Run workflow**. If successful, the workflow creates the **versioned** `LockOn-26.3-v1.2.1.jar` artifact and pushes it to the `lockon-fixed` branch. Download the JAR only after a successful build, and keep the old 1.2.0 JAR removed.
 
-In Modrinth, remove the old JAR before adding the new one. R toggles; G selects/clears target. Attacks occur only at the fully charged sword cooldown. Use only on consenting private PvP testing servers.
+Requires Minecraft 26.3, Fabric Loader, Fabric API and Java 25. R toggles targeting; G picks or clears a target; sword attacks wait for full vanilla cooldown. For consensual private-server PvP testing.
