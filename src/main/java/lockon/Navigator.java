@@ -129,6 +129,41 @@ final class Navigator {
     }
 
     /**
+     * Find the FIRST breakable obstruction in a direct path toward the enemy.
+     * Never mines block entities, valuable containers, fluids or unbreakables.
+     * The user must enable B for this to be called by chaseTarget().
+     */
+    static BlockPos directMiningObstacle(ClientLevel level, LocalPlayer player, Player target) {
+        Vec3Sample direction = Vec3Sample.between(player, target);
+        if (direction.length < 0.01) return null;
+        BlockPos previous = null;
+        double maxDistance = Math.min(4.0, direction.length);
+        for (double distance = 0.60; distance <= maxDistance; distance += 0.18) {
+            double x = player.getX() + direction.dx * distance;
+            double z = player.getZ() + direction.dz * distance;
+            for (double height : new double[] {0.15, 1.10}) {
+                BlockPos sample = BlockPos.containing(x, player.getY() + height, z);
+                if (sample.equals(previous)) continue;
+                previous = sample;
+                if (!passable(level, sample)) {
+                    return mineable(level, player, sample) ? sample : null;
+                }
+            }
+        }
+        return null;
+    }
+
+    private record Vec3Sample(double dx, double dz, double length) {
+        static Vec3Sample between(LocalPlayer player, Player target) {
+            double x = target.getX() - player.getX();
+            double z = target.getZ() - player.getZ();
+            double length = Math.hypot(x, z);
+            return length < 0.01 ? new Vec3Sample(0, 0, 0)
+                : new Vec3Sample(x / length, z / length, length);
+        }
+    }
+
+    /**
      * A small look-ahead prevents the direct chase from walking off a ledge.
      * Navigation jumps and pathfinding handle higher obstacles separately.
      */

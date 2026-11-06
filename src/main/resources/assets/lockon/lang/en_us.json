@@ -7,5 +7,6 @@
   "key.lockon.mode": "LockOn: precision/combo attack mode",
   "key.lockon.settings": "LockOn: open settings",
   "key.lockon.stats": "LockOn: combat practice statistics",
-  "key.lockon.teleport": "LockOn: teleport to player (server permission required)"
+  "key.lockon.teleport": "LockOn: teleport to player (server permission required)",
+  "key.lockon.mine_target": "LockOn: mine aimed block (requires B)"
 }

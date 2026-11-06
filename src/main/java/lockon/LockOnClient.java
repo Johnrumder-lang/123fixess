@@ -19,6 +19,7 @@ import net.minecraft.util.Mth;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.phys.Vec3;
+import net.minecraft.world.phys.BlockHitResult;
 
 /**
  * Target lock, legal sword hits, optional A* obstacle navigation and mining,
@@ -47,7 +48,7 @@ public final class LockOnClient implements ClientModInitializer {
     private static boolean ownsMovement;
     private static UUID targetId;
     private static ClientLevel previousLevel;
-    private static KeyMapping toggleKey, selectKey, chaseKey, critKey, mineKey, modeKey, settingsKey, statsKey;
+    private static KeyMapping toggleKey, selectKey, chaseKey, critKey, mineKey, modeKey, settingsKey, statsKey, manualMineKey;
     private static UUID trackedVelocityTarget;
     private static Vec3 filteredVelocity = new Vec3(0.0, 0.0, 0.0);
     private static UUID observedHurtTarget;
@@ -82,6 +83,13 @@ public final class LockOnClient implements ClientModInitializer {
     private static int lastNavigationJumpTick = -1000;
     private static Navigator.Step nextStep;
     private static BlockPos miningPos;
+    private static Direction miningFace = Direction.UP;
+    private static boolean manualMining;
+    private static int minedBlocks;
+    private static int cooldownWaits;
+    private static int aimRayMisses;
+    private static int fistFallbacks;
+    private static String lastAttackHold = "none";
 
     @Override public void onInitializeClient() {
         LockOnSettings.load();
@@ -95,6 +103,7 @@ public final class LockOnClient implements ClientModInitializer {
         modeKey = key("key.lockon.mode", InputConstants.KEY_K);
         settingsKey = key("key.lockon.settings", InputConstants.KEY_O);
         statsKey = key("key.lockon.stats", InputConstants.KEY_U);
+        manualMineKey = key("key.lockon.mine_target", InputConstants.KEY_N);
         ClientTickEvents.END_CLIENT_TICK.register(LockOnClient::tick);
         // Attack packets belong in client gameplay ticks, not in HUD render frames.
         // Rendering can run between vanilla movement packets, so a visual
@@ -120,6 +129,11 @@ public final class LockOnClient implements ClientModInitializer {
             attempts = 0;
             hurtSignals = 0;
             outOfRangeSkips = 0;
+            cooldownWaits = 0;
+            aimRayMisses = 0;
+            fistFallbacks = 0;
+            minedBlocks = 0;
+            lastAttackHold = "none";
             streak = 0;
             bestStreak = 0;
             lastHurtSignalTick = -1000;
@@ -138,9 +152,10 @@ public final class LockOnClient implements ClientModInitializer {
             return;
         }
         while (statsKey.consumeClick()) {
-            hint(mc, "Attack attempts " + attempts + ", hurt signals "
-                + hurtSignals + ", reach skips " + outOfRangeSkips
-                + "; " + LockOnPlayerFeedClient.status());
+            hint(mc, "Attacks " + attempts + ", hurt " + hurtSignals
+                + ", mined " + minedBlocks + ", range " + outOfRangeSkips
+                + ", aim " + aimRayMisses + ", fist retries " + fistFallbacks
+                + ", hold: " + lastAttackHold);
         }
         while (toggleKey.consumeClick()) {
             enabled = !enabled;
@@ -176,12 +191,41 @@ public final class LockOnClient implements ClientModInitializer {
             mining = !mining;
             if (!mining) stopMining(mc);
             nextPlanAt = 0;
-            hint(mc, "Break obstacles " + (mining ? "ON" : "OFF"));
+            hint(mc, "Block breaking " + (mining ? "ON (N mines aimed block)" : "OFF"));
+        }
+        while (manualMineKey.consumeClick()) {
+            if (!mining) {
+                hint(mc, "Press B to enable block breaking, then N at a block.");
+            } else if (mc.hitResult instanceof BlockHitResult hit
+                && me.getEyePosition().distanceTo(Vec3.atCenterOf(hit.getBlockPos())) < 4.2
+                && Navigator.mineable(mc.level, me, hit.getBlockPos())) {
+                stopMining(mc);
+                stopActions(mc);
+                mineBlock(mc, hit.getBlockPos(), hit.getDirection());
+                manualMining = miningPos != null;
+                hint(mc, "Mining " + hit.getBlockPos().toShortString()
+                    + " (server permission and suitable tool required)");
+            } else {
+                hint(mc, "Aim at a breakable nearby block (no containers/protected blocks).");
+            }
         }
         while (modeKey.consumeClick()) {
             precisionMode = !precisionMode;
             resetAttackSchedule();
             hint(mc, "Combat: " + (precisionMode ? "PRECISION (full charge)" : "COMBO (95% charge, damage-safe spacing)"));
+        }
+
+        // Dedicated one-block manual mining works without choosing a PvP target.
+        // Once started, keep progressing every tick until the block breaks.
+        if (manualMining) {
+            if (miningPos == null || !mining || !me.isAlive()
+                || me.getEyePosition().distanceTo(Vec3.atCenterOf(miningPos)) > 4.3) {
+                stopMining(mc);
+            } else {
+                BlockPos activeBlock = miningPos;
+                mineBlock(mc, activeBlock, miningFace);
+                return;
+            }
         }
 
         if (!enabled || targetId == null || !me.isAlive() || me.isSpectator()) {
@@ -240,6 +284,7 @@ public final class LockOnClient implements ClientModInitializer {
         while (modeKey.consumeClick()) {}
         while (settingsKey.consumeClick()) {}
         while (statsKey.consumeClick()) {}
+        while (manualMineKey.consumeClick()) {}
     }
 
     private static void resetTracking() {
@@ -350,6 +395,7 @@ public final class LockOnClient implements ClientModInitializer {
         if (mc.gameMode == null || me.isUsingItem()
             || (!swordEquipped && !bareHand) || miningPos != null) {
             resetAttackSchedule();
+            lastAttackHold = miningPos != null ? "mining" : "not holding sword/fist";
             return;
         }
         // The 26.3 server needs >90% charge for sprint knockback; keep
@@ -363,8 +409,17 @@ public final class LockOnClient implements ClientModInitializer {
         // post-damage immunity. Enforce 11 ticks between attacks at a single
         // target for consistent damage and knockback rather than fake combos.
         int minimumTicks = CombatTactics.minimumAttackTicks(bareHand, combo);
-        if (elapsed < minimumTicks
-            || me.getAttackStrengthScale(0.0f) < requiredCharge) return;
+        float measuredCharge = me.getAttackStrengthScale(0.0f);
+        // An empty hand normally fully recharges in about 5 ticks.
+        // After 11 ticks the victim immunity has also passed. Do not let
+        // stale local cooldown animation prevent every follow-up punch.
+        if (!CombatTactics.readyForAttack(
+                bareHand, elapsed, measuredCharge, requiredCharge)) {
+            cooldownWaits++;
+            lastAttackHold = "cooldown " + (int) (measuredCharge * 100.0f) + "%";
+            return;
+        }
+        if (bareHand && measuredCharge < requiredCharge) fistFallbacks++;
 
         // Preserve the randomized 20-50 ms delay after the appropriate
         // attack threshold, never scheduling it a second time because
@@ -397,10 +452,19 @@ public final class LockOnClient implements ClientModInitializer {
         double safeReach = Math.max(0.0, attackReach() - 0.08);
         if (ex * ex + ey * ey + ez * ez > safeReach * safeReach) {
             outOfRangeSkips++;
+            lastAttackHold = "out of reach";
             return;
         }
         Vec3 ray = eye.add(me.getViewVector(1.0f).scale(safeReach));
-        if (!me.hasLineOfSight(target) || box.clip(eye, ray).isEmpty()) return;
+        // At point-blank range the camera can be INSIDE the enemy's
+        // bounding box. Standard clip() can then return empty even though
+        // the target is directly in front of the player.
+        if (!me.hasLineOfSight(target)
+            || (!box.contains(eye) && box.clip(eye, ray).isEmpty())) {
+            aimRayMisses++;
+            lastAttackHold = "ray / line of sight";
+            return;
+        }
 
         boolean falling = !me.onGround() && me.fallDistance > 0.0f
             && me.getDeltaMovement().y < -0.01
@@ -437,6 +501,7 @@ public final class LockOnClient implements ClientModInitializer {
 
         mc.gameMode.attack(me, target);
         attempts++;
+        lastAttackHold = "attack sent";
         me.swing(InteractionHand.MAIN_HAND, me.getMainHandItem().getAttackAnimation(), false);
         lastAttackTick = ticks;
         lastAttackedTarget = target.getUUID();
@@ -473,6 +538,25 @@ public final class LockOnClient implements ClientModInitializer {
         double dzToTarget = target.getZ() - me.getZ();
         boolean oneBlockAhead = Navigator.oneBlockAhead(mc.level, me, dxToTarget, dzToTarget);
         boolean sameHeight = Math.abs(target.getY() - me.getY()) < 0.58;
+
+        // B is an explicit opt-in to break safe blocks in our way. The old
+        // A* planner almost always chose walking/jumping and never actually
+        // invoked mining; now a direct obstruction is mined before routing.
+        if (mining && !manualMining && d < 7.5) {
+            BlockPos obstacle = miningPos;
+            if (obstacle == null || mc.level.getBlockState(obstacle).isAir()) {
+                if (obstacle != null) stopMining(mc);
+                obstacle = Navigator.directMiningObstacle(mc.level, me, target);
+            }
+            if (obstacle != null && Navigator.mineable(mc.level, me, obstacle)
+                && me.getEyePosition().distanceTo(Vec3.atCenterOf(obstacle)) < 4.2) {
+                releaseMovement(mc);
+                mineBlock(mc, obstacle, faceTowardPlayer(me, obstacle));
+                return;
+            } else if (miningPos != null && !manualMining) {
+                stopMining(mc);
+            }
+        }
         if (ticks < recoveryUntilTick && !oneBlockAhead && d > 3.0) {
             boolean left = recoverySide < 0;
             double yaw = Math.toRadians(me.getYRot());
@@ -620,22 +704,60 @@ public final class LockOnClient implements ClientModInitializer {
             && !level.getBlockState(dest.below()).getCollisionShape(level, dest.below()).isEmpty();
     }
 
+    private static Direction faceTowardPlayer(LocalPlayer me, BlockPos pos) {
+        Vec3 center = Vec3.atCenterOf(pos);
+        double dx = me.getX() - center.x;
+        double dy = me.getEyeY() - center.y;
+        double dz = me.getZ() - center.z;
+        if (Math.abs(dy) > Math.max(Math.abs(dx), Math.abs(dz))) {
+            return dy > 0 ? Direction.UP : Direction.DOWN;
+        }
+        if (Math.abs(dx) > Math.abs(dz)) {
+            return dx > 0 ? Direction.EAST : Direction.WEST;
+        }
+        return dz > 0 ? Direction.SOUTH : Direction.NORTH;
+    }
+
     private static void mineBlock(Minecraft mc, BlockPos block) {
-        if (mc.gameMode == null || mc.level == null) return;
+        mineBlock(mc, block, faceTowardPlayer(mc.player, block));
+    }
+
+    private static void mineBlock(Minecraft mc, BlockPos block, Direction face) {
+        if (mc.gameMode == null || mc.level == null || mc.player == null) return;
+        if (mc.level.getBlockState(block).isAir()) {
+            if (miningPos != null && miningPos.equals(block)) {
+                minedBlocks++;
+                stopMining(mc);
+                nextPlanAt = 0;
+            }
+            return;
+        }
+        if (!Navigator.mineable(mc.level, mc.player, block)
+            || mc.player.getEyePosition().distanceTo(Vec3.atCenterOf(block)) > 4.3) {
+            stopMining(mc);
+            return;
+        }
         if (miningPos == null || !miningPos.equals(block)) {
             stopMining(mc);
             miningPos = block;
-            mc.gameMode.startDestroyBlock(block, Direction.UP);
+            miningFace = face;
+            mc.gameMode.startDestroyBlock(block, miningFace);
         } else {
-            mc.gameMode.continueDestroyBlock(block, Direction.UP);
+            // Important: startDestroyBlock only starts a dig. Vanilla
+            // Survival needs a CONTINUE packet each tick until completion.
+            mc.gameMode.continueDestroyBlock(block, miningFace);
+            mc.player.swing(InteractionHand.MAIN_HAND,
+                mc.player.getMainHandItem().getAttackAnimation(), false);
         }
         if (mc.level.getBlockState(block).isAir()) {
+            minedBlocks++;
             stopMining(mc);
             nextPlanAt = 0;
         }
     }
 
     private static void stopMining(Minecraft mc) {
+        manualMining = false;
         if (miningPos == null) return;
         if (mc.gameMode != null) mc.gameMode.stopDestroyBlock();
         miningPos = null;

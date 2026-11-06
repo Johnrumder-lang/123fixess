@@ -18,6 +18,16 @@ final class CombatTactics {
         return 11;
     }
 
+    static boolean readyForAttack(boolean bareHand, int elapsedTicks,
+                                  float measuredCharge, float requiredCharge) {
+        if (elapsedTicks < 11) return false;
+        // With fists the default vanilla attack cooldown is five ticks, so
+        // eleven ticks are sufficient to recharge the hand normally.
+        // A stale client cooldown display must not permanently block punches.
+        return bareHand || (Float.isFinite(measuredCharge)
+            && measuredCharge >= requiredCharge);
+    }
+
     static double normalizeReach(double reach) {
         if (!Double.isFinite(reach)) return 3.0;
         return Math.max(2.5, Math.min(3.0, reach));

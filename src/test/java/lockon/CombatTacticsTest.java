@@ -21,6 +21,14 @@ public final class CombatTacticsTest {
             "fist openers do not bypass victim immunity between hits");
         check(CombatTactics.minimumAttackTicks(false, false) == 11,
             "precision mode cannot waste packets inside immunity");
+        check(!CombatTactics.readyForAttack(true, 10, 0.0f, 0.999f),
+            "fists cannot attack before target immunity expires");
+        check(CombatTactics.readyForAttack(true, 11, 0.0f, 0.999f),
+            "fist attack must recover from stale client cooldown after immunity");
+        check(!CombatTactics.readyForAttack(false, 11, 0.5f, 0.999f),
+            "sword must still wait for weapon charge");
+        check(CombatTactics.readyForAttack(false, 13, 1.0f, 0.999f),
+            "charged swords can follow up normally");
         check(CombatTactics.normalizeReach(2.7) == 2.7, "preserve configured sub-3 reach");
         check(CombatTactics.normalizeReach(7.0) == 3.0, "cap at vanilla survival sword reach");
         check(CombatTactics.normalizeReach(Double.NaN) == 3.0, "invalid reach fallback");
