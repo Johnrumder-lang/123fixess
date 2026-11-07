@@ -142,9 +142,9 @@ final class LockOnFood {
         for(Entity e:mc.level.entitiesForRendering()) {
             if(!(e instanceof net.minecraft.world.entity.LivingEntity animal) || !animal.isAlive()) continue;
             var type=e.getType();
-            if(type!=net.minecraft.world.entity.EntityType.COW && type!=net.minecraft.world.entity.EntityType.PIG
-                &&type!=net.minecraft.world.entity.EntityType.SHEEP &&type!=net.minecraft.world.entity.EntityType.CHICKEN
-                &&type!=net.minecraft.world.entity.EntityType.RABBIT) continue;
+            if(type!=net.minecraft.world.entity.EntityTypes.COW && type!=net.minecraft.world.entity.EntityTypes.PIG
+                &&type!=net.minecraft.world.entity.EntityTypes.SHEEP &&type!=net.minecraft.world.entity.EntityTypes.CHICKEN
+                &&type!=net.minecraft.world.entity.EntityTypes.RABBIT) continue;
             if(e.hasCustomName() || (e instanceof net.minecraft.world.entity.AgeableMob ageable && ageable.isBaby())) continue;
             if(preyId!=null) {if(preyId.equals(e.getUUID())) {prey=animal;break;}}
             else if(e.distanceToSqr(mc.player)<nearest) {nearest=e.distanceToSqr(mc.player);prey=animal;}
