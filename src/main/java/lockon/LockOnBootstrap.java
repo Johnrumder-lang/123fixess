@@ -56,7 +56,10 @@ final class LockOnBootstrap {
     private static int stationAttempts;
     private static boolean cleaningRecipe;
     private static int cleaningTicks;
-    private static final int SEARCH_RADIUS = 13;
+    private static final int SEARCH_RADIUS = 32;
+    private static BlockPos scoutTarget;
+    private static int scoutIndex, scoutSince;
+    private static final java.util.Set<BlockPos> rejectedSites=new java.util.HashSet<>();
 
     private static final class RecipeJob {
         final boolean table;
@@ -83,6 +86,10 @@ final class LockOnBootstrap {
         // Keep all station blocks off the four cardinal mining corridors.
         table=base.relative(direction.getOpposite(),2)
             .relative(direction.getClockWise(),2);
+        rejectedSites.clear();
+        table=findWorkbenchSite(mc);
+        scoutTarget=null;
+        scoutIndex=0;
         treeBlock=digTarget=pickupTarget=null;
         pickupUntil=0;
         aimedWood=null;
@@ -297,27 +304,15 @@ final class LockOnBootstrap {
     }
 
     private static void gatherWood(Minecraft mc,LocalPlayer player) {
-        if(treeBlock==null || mc.level.getBlockState(treeBlock).isAir()
-            || ticks%120==0){
-            // Missing trees previously caused a world-wide local block
-            // search EVERY tick. Scan at most once per 20 ticks to avoid
-            // starving actual player movement and frame updates.
-            if(ticks-lastWoodSearchAt<20){
-                detail="Checking nearby loaded trees";
-                release(mc);
-                return;
-            }
+        if((treeBlock==null || mc.level.getBlockState(treeBlock).isAir() || ticks%120==0)
+            && ticks-lastWoodSearchAt>=20) {
             lastWoodSearchAt=ticks;
             treeBlock=findTree(mc,player);
             aimedWood=null;
             woodSearches++;
         }
         if(treeBlock==null){
-            release(mc);
-            if(woodSearches>8) {
-                step=Step.WAIT;
-                detail="No natural tree within 13 blocks. Stand by a tree and restart P.";
-            } else detail="Searching for a natural tree in loaded chunks";
+            scoutForTree(mc);
             return;
         }
         double distance=player.getEyePosition().distanceTo(Vec3.atCenterOf(treeBlock));
@@ -334,21 +329,8 @@ final class LockOnBootstrap {
                 detail="Too-high tree trunk; selecting a closer log";
                 return;
             }
-            boolean direct=Navigator.safeForward(mc.level,player,dx,dz);
-            boolean stepUp=!direct && Navigator.oneBlockAhead(mc.level,player,dx,dz)
-                && Navigator.safeToJump(mc.level,player);
-            if (!direct && !stepUp) {
-                blockedTrees.add(treeBlock);
-                treeBlock=null;
-                detail="Tree route blocked; selecting another log";
-                return;
-            }
-            rotate(player,new Vec3(treeBlock.getX()+0.5,player.getEyeY(),
-                treeBlock.getZ()+0.5));
-            moveForward(mc);
-            if(stepUp) LockOnMovement.jump(mc,true);
-            detail="Walking to tree ("+(int)distance+" blocks)"
-                +(stepUp?" with step jump":"");
+            LockOnTravel.walk(mc,treeBlock);
+            detail="Walking around obstacles to tree ("+(int)distance+" blocks)";
             lastMoveTick=ticks;
             return;
         }
@@ -441,12 +423,15 @@ final class LockOnBootstrap {
             lastLookTarget=null;
             return;
         }
-        if(!mc.level.getBlockState(table).isAir()
-            || mc.level.getBlockState(table.below()).isAir()){
-            detail="Cannot place workbench on obstructed or unsupported ground";
-            step=Step.WAIT;
-            release(mc);
-            return;
+        if(table==null || !validWorkbenchSite(mc,table)) {
+            table=findWorkbenchSite(mc);
+            stationAttempts=0;
+            lastLookTarget=null;
+            if(table==null) {
+                detail="Searching for supported workbench space near home";
+                release(mc);
+                return;
+            }
         }
         int slot=hotbarSlot(player,Items.CRAFTING_TABLE);
         if(slot<0){
@@ -454,20 +439,8 @@ final class LockOnBootstrap {
             detail="Moving crafted table to hotbar";
             return;
         }
-        double d=player.getEyePosition().distanceTo(Vec3.atCenterOf(table));
-        if(d>4.15){
-            lastLookTarget=null;
-            double dx=table.getX()+0.5-player.getX();
-            double dz=table.getZ()+0.5-player.getZ();
-            if(!Navigator.safeForward(mc.level,player,dx,dz)){
-                detail="Path to workbench site blocked: cannot craft pickaxe yet";
-                step=Step.WAIT;release(mc);return;
-            }
-            rotate(player,new Vec3(table.getX()+0.5,player.getEyeY(),table.getZ()+0.5));
-            moveForward(mc);
-            detail="Walking back to crafting-table location";
-            return;
-        }
+        Vec3 supportPoint=new Vec3(table.getX()+0.5,table.getY()-0.01,table.getZ()+0.5);
+        if(!approachWorkbench(mc,table.below(),supportPoint)) return;
         release(mc);
         player.getInventory().setSelectedSlot(slot);
         Vec3 hit=new Vec3(table.getX()+0.5,table.getY(),table.getZ()+0.5);
@@ -477,17 +450,20 @@ final class LockOnBootstrap {
         }
         if(ticks-lastStationUseTick<14)return;
         if(stationAttempts>=5) {
-            step=Step.WAIT;
-            detail="Workbench placement rejected (ground/protection/reach)";
+            rejectedSites.add(table);
+            table=findWorkbenchSite(mc);
+            stationAttempts=0;
+            lastLookTarget=null;
+            detail="Placement unconfirmed: trying another supported site";
             return;
         }
         BlockHitResult supportHit=mc.level.clip(new ClipContext(
-            player.getEyePosition(),hit,
+            player.getEyePosition(),supportPoint,
             ClipContext.Block.COLLIDER,ClipContext.Fluid.NONE,player));
         if(supportHit.getType()!=HitResult.Type.BLOCK
             || !supportHit.getBlockPos().equals(table.below())) {
-            detail="Workbench placement: floor not visible from player";
-            step=Step.WAIT;
+            lastLookTarget=null;
+            approachWorkbench(mc,table.below(),supportPoint);
             return;
         }
         mc.gameMode.useItemOn(player,InteractionHand.MAIN_HAND,supportHit);
@@ -519,20 +495,7 @@ final class LockOnBootstrap {
             step=Step.WOOD;
             return false;
         }
-        if(player.getEyePosition().distanceTo(Vec3.atCenterOf(table))>4.0) {
-            lastLookTarget=null;
-            double dx=table.getX()+0.5-player.getX(),dz=table.getZ()+0.5-player.getZ();
-            if(!Navigator.safeForward(mc.level,player,dx,dz)){
-                step=Step.WAIT;
-                detail="Workbench unreachable from current position";
-                release(mc);
-                return false;
-            }
-            rotate(player,new Vec3(table.getX()+0.5,player.getEyeY(),table.getZ()+0.5));
-            moveForward(mc);
-            detail="Walking to crafting table";
-            return false;
-        }
+        if(!approachWorkbench(mc,table,Vec3.atCenterOf(table))) return false;
         release(mc);
         Vec3 target=Vec3.atCenterOf(table);
         if(!lookForInteraction(player,table,target)) {
@@ -545,8 +508,8 @@ final class LockOnBootstrap {
             ClipContext.Block.COLLIDER,ClipContext.Fluid.NONE,player));
         if(tableHit.getType()!=HitResult.Type.BLOCK
             || !tableHit.getBlockPos().equals(table)) {
-            detail="Workbench blocked by another block";
-            step=Step.WAIT;
+            lastLookTarget=null;
+            approachWorkbench(mc,table,target);
             return false;
         }
         mc.gameMode.useItemOn(player,InteractionHand.MAIN_HAND,tableHit);
@@ -555,6 +518,97 @@ final class LockOnBootstrap {
         lastStationUseTick=ticks;
         detail="Opening crafting-table GUI";
         return false;
+    }
+
+    static BlockPos workbenchPosition() { return table; }
+
+    private static boolean validWorkbenchSite(Minecraft mc,BlockPos p) {
+        return !rejectedSites.contains(p)
+            && mc.level.getBlockState(p).canBeReplaced()
+            && mc.level.getBlockState(p).getFluidState().isEmpty()
+            && mc.level.getBlockState(p.below()).isFaceSturdy(mc.level,p.below(),Direction.UP)
+            && mc.level.getBlockState(p.below()).getFluidState().isEmpty()
+            && !mc.player.getBoundingBox().intersects(new net.minecraft.world.phys.AABB(p));
+    }
+
+    private static BlockPos findWorkbenchSite(Minecraft mc) {
+        BlockPos chosen=null;
+        double best=Double.MAX_VALUE;
+        for(BlockPos candidate:BlockPos.betweenClosed(base.offset(-4,-2,-4),base.offset(4,2,4))) {
+            if(mc.level.getBlockState(candidate).is(Blocks.CRAFTING_TABLE)) return candidate.immutable();
+            // Preserve the four mining lanes around the recorded home.
+            if(candidate.getX()==base.getX() || candidate.getZ()==base.getZ()
+                || !validWorkbenchSite(mc,candidate)) continue;
+            double distance=Vec3.atCenterOf(candidate).distanceToSqr(Vec3.atCenterOf(base));
+            if(distance<best) {best=distance;chosen=candidate.immutable();}
+        }
+        return chosen;
+    }
+
+    private static boolean clearInteraction(Minecraft mc,Vec3 eyes,BlockPos block,Vec3 point) {
+        if(eyes.distanceTo(point)>4.0) return false;
+        BlockHitResult hit=mc.level.clip(new ClipContext(eyes,point,
+            ClipContext.Block.COLLIDER,ClipContext.Fluid.NONE,mc.player));
+        return hit.getType()==HitResult.Type.BLOCK && hit.getBlockPos().equals(block);
+    }
+
+    private static boolean approachWorkbench(Minecraft mc,BlockPos block,Vec3 point) {
+        if(clearInteraction(mc,mc.player.getEyePosition(),block,point)) return true;
+        lastLookTarget=null;
+        BlockPos stand=null;
+        double best=Double.MAX_VALUE;
+        for(BlockPos p:BlockPos.betweenClosed(table.offset(-2,-1,-2),table.offset(2,1,2))) {
+            if(p.equals(table) || !Navigator.passable(mc.level,p)
+                || !Navigator.passable(mc.level,p.above())
+                || !mc.level.getBlockState(p.below()).isFaceSturdy(mc.level,p.below(),Direction.UP)) continue;
+            Vec3 eyes=Vec3.atBottomCenterOf(p).add(0,mc.player.getEyeHeight(),0);
+            if(!clearInteraction(mc,eyes,block,point)) continue;
+            double distance=mc.player.position().distanceToSqr(Vec3.atBottomCenterOf(p));
+            if(distance<best) {best=distance;stand=p.immutable();}
+        }
+        if(stand!=null) {
+            LockOnTravel.walk(mc,stand);
+            detail="Walking to a clear view of the workbench/floor";
+        } else {
+            release(mc);
+            if(!hasTable(mc)) {
+                rejectedSites.add(table);
+                table=findWorkbenchSite(mc);
+                stationAttempts=0;
+            }
+            detail="Looking for an unobstructed workbench approach";
+        }
+        return false;
+    }
+
+    private static void scoutForTree(Minecraft mc) {
+        if(scoutTarget!=null && ticks-scoutSince<180) {
+            if(!LockOnTravel.walk(mc,scoutTarget)) {
+                detail="Exploring loaded terrain for a natural tree";
+                return;
+            }
+        }
+        scoutTarget=null;
+        // Survey successive directions around home, avoiding unsafe terrain.
+        double angle=(scoutIndex%8)*Math.PI/4;
+        int radius=8+8*((scoutIndex/8)%6);
+        scoutIndex++;
+        int x=base.getX()+(int)Math.round(Math.cos(angle)*radius);
+        int z=base.getZ()+(int)Math.round(Math.sin(angle)*radius);
+        if(!mc.level.hasChunk(x>>4,z>>4)) {release(mc);return;}
+        for(int dy=4;dy>=-4;dy--) {
+            BlockPos p=new BlockPos(x,base.getY()+dy,z);
+            if(Navigator.passable(mc.level,p) && Navigator.passable(mc.level,p.above())
+                && mc.level.getBlockState(p.below()).isFaceSturdy(mc.level,p.below(),Direction.UP)) {
+                scoutTarget=p;
+                scoutSince=ticks;
+                LockOnTravel.walk(mc,p);
+                detail="Searching loaded terrain for wood";
+                return;
+            }
+        }
+        release(mc);
+        detail="No safe tree-search route here; trying another direction";
     }
 
     private static boolean hasTable(Minecraft mc){

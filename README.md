@@ -1,12 +1,16 @@
-# LockOn v3.5.1 — movement input repair
+# LockOn v3.5.2 — movement input repair
 
 Minecraft Java 26.3, Fabric Loader 0.20.1, Fabric API 0.165.2+26.3, Cloth Config 26.3.159, Java 25.
 
-Replace older LockOn JARs with `LockOn-26.3-v3.5.1.jar`. F7 starts/stops survival work, F6 opens settings and U prints diagnostics. Enable automatic repeat in Survival settings.
+Replace older LockOn JARs with `LockOn-26.3-v3.5.2.jar`. F7 starts/stops survival work, F6 opens settings and U prints diagnostics. Enable automatic repeat in Survival settings.
 
-Movement repair in v3.5.1
+Movement repair in v3.5.2
 
 The survival controller no longer changes the keyboard bindings. Its movement intent is applied at the end of `KeyboardInput.tick`, updating both the input flags and movement vector. Physical movement input immediately stops autoplay and is preserved in the same player tick. F7 remains the start/stop key. Idle survival ticks leave keyboard input untouched. A sustained blocked movement request stops autoplay.
+
+Tree and workbench repair in v3.5.2
+
+Tree gathering routes around obstacles to natural trees in loaded terrain, scanning within 32 blocks and surveying safe points up to 48 blocks from home when no tree is found. Workbench placement chooses supported space near home, walks to a position with a clear view of the support block, and retries another site after rejected placement. The ray used to target the floor extends slightly into the supporting block. Base processing reuses the selected workbench position.
 
 Inherited survival features follow.
 

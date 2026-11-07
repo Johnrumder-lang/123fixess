@@ -91,6 +91,7 @@ final class LockOnBase {
         if (stageTicks > 2400) advance(mc);
         // Keep utility stations in diagonal corners so none block the four
         // cardinal strip-mining lanes used by continuous survival mode.
+        if (table == null) table = LockOnBootstrap.workbenchPosition();
         if (table == null) table = base.relative(direction.getOpposite(),2)
             .relative(direction.getClockWise(),2);
         if (chest == null) chest = base.relative(direction,2)
