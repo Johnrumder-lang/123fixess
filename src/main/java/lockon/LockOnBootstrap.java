@@ -111,6 +111,8 @@ final class LockOnBootstrap {
             +(detail.isBlank() ? "" : " — "+detail);
     }
 
+    static boolean busyCrafting() { return recipe!=null || cleaningRecipe; }
+
     static boolean managingContainer() { return openedTable; }
 
     static void stop(Minecraft mc) {

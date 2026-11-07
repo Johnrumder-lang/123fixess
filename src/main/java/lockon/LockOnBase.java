@@ -65,6 +65,8 @@ final class LockOnBase {
         lastFurnaceOutput=0;
     }
 
+    static boolean busyCrafting() { return craftJob!=null || moveStage>0; }
+
     static boolean managingContainer() { return askedOpen; }
     static String status() { return stage + ": " + status
         + " placed " + placed + " stored " + stored

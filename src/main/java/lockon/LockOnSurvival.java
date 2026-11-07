@@ -215,7 +215,8 @@ public final class LockOnSurvival {
             if(phase==Phase.TUNNEL) phase=Phase.RETURN;
         }
         if(LockOnTravel.openGate(mc)) {release(mc);return;}
-        if(!managingContainer() && me.containerMenu instanceof InventoryMenu) {
+        if(!managingContainer() && !LockOnBootstrap.busyCrafting()
+            && !LockOnBase.busyCrafting() && me.containerMenu instanceof InventoryMenu) {
             if(LockOnBase.equipArmor(mc)) return;
             if(me.getFoodData().getFoodLevel()<18 && LockOnSettings.survivalAutoEat()
                 && tryEat(mc,me)) {release(mc);return;}
