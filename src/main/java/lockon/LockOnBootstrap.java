@@ -41,6 +41,8 @@ final class LockOnBootstrap {
     private static ClientLevel world;
     private static Direction facing;
     private static int ticks, lastClick, lastDigTick, lastMoveTick, noProgress;
+    private static int lastWoodSearchAt=-1000;
+    private static final java.util.Set<BlockPos> blockedTrees=new java.util.HashSet<>();
     private static int logsMined, recipes, woodSearches;
     private static String detail = "";
     private static RecipeJob recipe;
@@ -98,6 +100,8 @@ final class LockOnBootstrap {
         cleaningRecipe=false;
         cleaningTicks=0;
         logsMined=recipes=woodSearches=0;
+        lastWoodSearchAt=-1000;
+        blockedTrees.clear();
         detail="Locating wood";
         step=Step.WOOD;
     }
@@ -144,6 +148,7 @@ final class LockOnBootstrap {
             if(ticks%20==0 && !cleaningRecipe){
                 woodSearches=0;
                 treeBlock=null;
+                blockedTrees.clear();
                 step=Step.WOOD;
                 detail="Rechecking materials and resuming progression";
             } else return false;
@@ -276,7 +281,16 @@ final class LockOnBootstrap {
 
     private static void gatherWood(Minecraft mc,LocalPlayer player) {
         if(treeBlock==null || mc.level.getBlockState(treeBlock).isAir()
-            || ticks%60==0){
+            || ticks%120==0){
+            // Missing trees previously caused a world-wide local block
+            // search EVERY tick. Scan at most once per 20 ticks to avoid
+            // starving actual player movement and frame updates.
+            if(ticks-lastWoodSearchAt<20){
+                detail="Checking nearby loaded trees";
+                release(mc);
+                return;
+            }
+            lastWoodSearchAt=ticks;
             treeBlock=findTree(mc,player);
             aimedWood=null;
             woodSearches++;
@@ -297,16 +311,27 @@ final class LockOnBootstrap {
         if(distance>4.0 || (distance>2.25 && horizontalToTree>1.85)){
             double dx=treeBlock.getX()+0.5-player.getX();
             double dz=treeBlock.getZ()+0.5-player.getZ();
-            if(Math.abs(treeBlock.getY()-player.getY())>4.0
-                || !Navigator.safeForward(mc.level,player,dx,dz)){
+            if(Math.abs(treeBlock.getY()-player.getY())>4.0){
+                blockedTrees.add(treeBlock);
                 treeBlock=null;
-                detail="Tree path blocked; searching for an accessible tree";
+                detail="Too-high tree trunk; selecting a closer log";
+                return;
+            }
+            boolean direct=Navigator.safeForward(mc.level,player,dx,dz);
+            boolean stepUp=!direct && Navigator.oneBlockAhead(mc.level,player,dx,dz)
+                && Navigator.safeToJump(mc.level,player);
+            if (!direct && !stepUp) {
+                blockedTrees.add(treeBlock);
+                treeBlock=null;
+                detail="Tree route blocked; selecting another log";
                 return;
             }
             rotate(player,new Vec3(treeBlock.getX()+0.5,player.getEyeY(),
                 treeBlock.getZ()+0.5));
             moveForward(mc);
-            detail="Walking to tree ("+(int)distance+" blocks)";
+            if(stepUp) LockOnMovement.jump(mc,true);
+            detail="Walking to tree ("+(int)distance+" blocks)"
+                +(stepUp?" with step jump":"");
             lastMoveTick=ticks;
             return;
         }
@@ -322,6 +347,7 @@ final class LockOnBootstrap {
         if(hit.getType()!=HitResult.Type.BLOCK
             || !hit.getBlockPos().equals(treeBlock)){
             detail="Tree log obscured; selecting a visible trunk block";
+            blockedTrees.add(treeBlock);
             treeBlock=null;
             return;
         }
@@ -349,7 +375,8 @@ final class LockOnBootstrap {
                 if(!mc.level.hasChunk(bx>>4,bz>>4))continue;
                 for(int y=-2;y<=5;y++){
                     BlockPos p=new BlockPos(bx,playerPos.getY()+y,bz);
-                    if(!mc.level.getBlockState(p).is(BlockTags.LOGS)
+                    if(blockedTrees.contains(p)
+                        || !mc.level.getBlockState(p).is(BlockTags.LOGS)
                         || !naturalTree(mc.level,p))continue;
                     double physical=player.getEyePosition().distanceToSqr(Vec3.atCenterOf(p));
                     if(physical < 4.2*4.2) {

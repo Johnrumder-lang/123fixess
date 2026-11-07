@@ -85,6 +85,12 @@ assert "LockOnMovement.diagnostic(mc)" in client
 assert "LockOnMovement.stuck()" in survival
 assert survival.index("if (enemyNear && LockOnSettings.survivalFightMobs()") < survival.index("SurvivalPolicy.Decision decision")
 assert "Sent normal melee attack to hostile" in survival
+# Prevent a missing tree from starting a multi-thousand-block search
+# on every gameplay tick and permit one-block step-up traversal.
+assert "ticks-lastWoodSearchAt<20" in bootstrap
+assert "blockedTrees.contains(p)" in bootstrap
+assert "LockOnMovement.jump(mc,true)" in bootstrap
+print("Throttled wood search and accessible-tree fallback checks: pass")
 print("Movement controller and urgent hostile defense order checks: pass")
 print("F7/F6 default key collision and saved-key migration checks: pass")
 print("Survival wood-to-tools progression, repeat and no-special-commands: pass")
