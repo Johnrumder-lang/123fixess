@@ -11,6 +11,7 @@ import net.minecraft.world.phys.Vec3;
  * position/teleport packets and never bypasses server validation.
  */
 final class LockOnMovement {
+    private static boolean owned;
     private static boolean forward;
     private static boolean sprint;
     private static boolean jump;
@@ -23,6 +24,7 @@ final class LockOnMovement {
     private LockOnMovement() {}
 
     static void forward(Minecraft mc, boolean wantsSprint) {
+        owned=true;
         forward=true;
         sprint=wantsSprint;
         jump=false;
@@ -30,11 +32,13 @@ final class LockOnMovement {
     }
 
     static void jump(Minecraft mc, boolean wantsJump) {
+        owned=true;
         jump=wantsJump;
         apply(mc);
     }
 
     static void stop(Minecraft mc) {
+        if (!owned) return;
         forward=false;
         sprint=false;
         jump=false;
@@ -43,6 +47,7 @@ final class LockOnMovement {
         lastPosition=null;
         recentDelta=0.0;
         apply(mc);
+        owned=false;
     }
 
     static void beforeClientTick(Minecraft mc) {

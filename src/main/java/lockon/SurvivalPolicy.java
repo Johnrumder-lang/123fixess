@@ -19,6 +19,10 @@ final class SurvivalPolicy {
         return Decision.MINE;
     }
 
+    static boolean shouldFlee(double health, boolean creeper, int threats, boolean fightEnabled) {
+        return creeper || health<=10 || threats>=3 || !fightEnabled;
+    }
+
     static boolean mineCorridorBlock(boolean hasSupport, boolean fluidNearby,
                                      boolean allowedBlock, boolean currentlyLoaded) {
         return hasSupport && !fluidNearby && allowedBlock && currentlyLoaded;
@@ -26,7 +30,8 @@ final class SurvivalPolicy {
 
     static boolean shouldSmelt(String itemId) {
         return switch (itemId) {
-            case "minecraft:raw_iron", "minecraft:raw_gold", "minecraft:raw_copper",
+            case "minecraft:potato", "minecraft:beef", "minecraft:chicken", "minecraft:porkchop",
+                 "minecraft:mutton", "minecraft:cod", "minecraft:salmon", "minecraft:raw_iron", "minecraft:raw_gold", "minecraft:raw_copper",
                  "minecraft:iron_ore", "minecraft:gold_ore",
                  "minecraft:copper_ore", "minecraft:deepslate_iron_ore",
                  "minecraft:deepslate_gold_ore",

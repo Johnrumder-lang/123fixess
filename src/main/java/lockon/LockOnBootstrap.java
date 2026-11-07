@@ -273,7 +273,22 @@ final class LockOnBootstrap {
                         new Ingredient(plank,3),new Ingredient(Items.STICK,5),
                         new Ingredient(Items.STICK,8)));
             }
-            case READY -> {return true;}
+            case READY -> {
+                // Carry enough renewable supplies for stations and replacement tools.
+                if (countTag(player,ItemTags.PLANKS)<24) {
+                    Item log=findItem(player,ItemTags.LOGS);
+                    if(log==null) gatherWood(mc,player);
+                    else startCraft(false,Items.OAK_PLANKS,List.of(new Ingredient(log,1)));
+                    return false;
+                }
+                if(count(player,Items.STICK)<8) {
+                    Item plank=findItem(player,ItemTags.PLANKS);
+                    startCraft(false,Items.STICK,List.of(new Ingredient(plank,1),new Ingredient(plank,3)));
+                    return false;
+                }
+                // Resource collection can finish far from home. Walk back before mining.
+                return LockOnTravel.walk(mc,base);
+            }
             case WAIT -> {}
         }
         return false;

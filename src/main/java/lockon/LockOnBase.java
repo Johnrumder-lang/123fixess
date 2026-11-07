@@ -33,7 +33,7 @@ import net.minecraft.core.registries.BuiltInRegistries;
  * may be manipulated. One inventory input per game tick at most.
  */
 final class LockOnBase {
-    private enum Stage { TABLE, CHEST, UPGRADE_TOOL, FURNACE, SMELT, UPGRADE_IRON, COMPACT, STORE, DONE }
+    private enum Stage { TABLE, CHEST, UPGRADE_TOOL, FURNACE, SMELT, UPGRADE_IRON, EQUIPMENT, FOOD, COMPACT, STORE, DONE }
     private static Stage stage = Stage.TABLE;
     private static BlockPos table, chest, furnace;
     private static int ticks, stageTicks, lastInput;
@@ -50,6 +50,7 @@ final class LockOnBase {
 
     static void reset() {
         stage=Stage.TABLE;
+        equipmentRecipe=null;
         ticks=stageTicks=0;
         lastInput=-20;
         moveStage=0;
@@ -106,7 +107,7 @@ final class LockOnBase {
                 }
                 // Craft a workbench from 4 wooden planks via the 2x2 player grid.
                 Item plank = findPlank(mc.player,4);
-                if (plank != null) {
+                if (plank != null || craftJob!=null) {
                     if (craft(mc,plank,new int[]{1,2,3,4},true)) {
                         if(findHotbar(mc.player,Items.CRAFTING_TABLE)>=0) {
                             close(mc); craftJob=null;
@@ -126,7 +127,7 @@ final class LockOnBase {
                     advance(mc);return false;
                 }
                 Item plank=findPlank(mc.player,8);
-                if(plank!=null && isBlock(mc,table,Blocks.CRAFTING_TABLE)) {
+                if((plank!=null || craftJob!=null) && isBlock(mc,table,Blocks.CRAFTING_TABLE)) {
                     if (open(mc,table,CraftingMenu.class)) {
                         if(craft(mc,plank,new int[]{1,2,3,4,6,7,8,9},false))
                             close(mc);
@@ -145,8 +146,8 @@ final class LockOnBase {
                     advance(mc);
                     return false;
                 }
-                if(countInventory(mc.player,Items.COBBLESTONE)>=3
-                    && countInventory(mc.player,Items.STICK)>=2
+                if((craftJob!=null || countInventory(mc.player,Items.COBBLESTONE)>=3
+                    && countInventory(mc.player,Items.STICK)>=2)
                     && isBlock(mc,table,Blocks.CRAFTING_TABLE)){
                     if(open(mc,table,CraftingMenu.class)){
                         if(craft(mc,Items.COBBLESTONE,new int[]{1,2,3},
@@ -166,7 +167,7 @@ final class LockOnBase {
                 if (place(mc,furnace,Items.FURNACE)) {
                     advance(mc);return false;
                 }
-                if(countInventory(mc.player,Items.COBBLESTONE)>=8
+                if((craftJob!=null || countInventory(mc.player,Items.COBBLESTONE)>=8)
                     && isBlock(mc,table,Blocks.CRAFTING_TABLE)) {
                     if(open(mc,table,CraftingMenu.class)) {
                         if(craft(mc,Items.COBBLESTONE,new int[]{1,2,3,4,6,7,8,9},false))
@@ -209,7 +210,7 @@ final class LockOnBase {
                 if(menu.getSlot(1).getItem().isEmpty()){
                     int src=findInventorySlot(menu,start, s->
                         s.is(Items.COAL) || s.is(Items.CHARCOAL)
-                            || s.is(Items.COAL_BLOCK));
+                            || s.is(Items.COAL_BLOCK) || s.is(ItemTags.PLANKS));
                     if(src>=0){
                         moveStack(mc,src,1);
                         return false;
@@ -217,7 +218,8 @@ final class LockOnBase {
                 }
 
                 boolean hasInput=!menu.getSlot(0).getItem().isEmpty();
-                boolean hasFuel=!menu.getSlot(1).getItem().isEmpty();
+                boolean hasFuel=!menu.getSlot(1).getItem().isEmpty()
+                    || mc.level.getBlockState(furnace).getValue(net.minecraft.world.level.block.FurnaceBlock.LIT);
                 if(!hasInput || !hasFuel) {
                     close(mc);
                     advance(mc);return false;
@@ -233,13 +235,13 @@ final class LockOnBase {
                     || hasTool(mc.player,Items.NETHERITE_PICKAXE)) {
                     advance(mc);return false;
                 }
-                if(countInventory(mc.player,Items.IRON_INGOT)<3
+                if((craftJob==null && countInventory(mc.player,Items.IRON_INGOT)<3)
                     || !isBlock(mc,table,Blocks.CRAFTING_TABLE)) {
                     status="Iron upgrade requires 3 smelted iron ingots";
                     advance(mc);return false;
                 }
                 if(!open(mc,table,CraftingMenu.class))return false;
-                if(countInventory(mc.player,Items.STICK)<2) {
+                if(craftJob==null && countInventory(mc.player,Items.STICK)<2) {
                     Item plank=findPlank(mc.player,2);
                     if(plank!=null) {
                         if(craft(mc,plank,new int[]{1,4},false))close(mc);
@@ -250,6 +252,25 @@ final class LockOnBase {
                 }
                 if(craft(mc,Items.IRON_INGOT,new int[]{1,2,3},
                     Items.STICK,new int[]{5,8},false))close(mc);
+            }
+            case EQUIPMENT -> {
+                if(!isBlock(mc,table,Blocks.CRAFTING_TABLE)) {advance(mc);return false;}
+                if(equipmentRecipe==null) equipmentRecipe=nextEquipment(mc);
+                if(equipmentRecipe==null) {advance(mc);return false;}
+                if(!open(mc,table,CraftingMenu.class)) return false;
+                Equipment recipe=equipmentRecipe;
+                if(craft(mc,recipe.material(),recipe.cells(),Items.STICK,recipe.sticks(),false)) {
+                    close(mc);
+                    equipmentRecipe=null;
+                }
+            }
+            case FOOD -> {
+                if(!isBlock(mc,table,Blocks.CRAFTING_TABLE)
+                    || (craftJob==null && countInventory(mc.player,Items.WHEAT)<3)) {
+                    advance(mc);return false;
+                }
+                if(!open(mc,table,CraftingMenu.class)) return false;
+                if(craft(mc,Items.WHEAT,new int[]{1,2,3},false)) close(mc);
             }
             case COMPACT -> {
                 if (!LockOnSettings.survivalCompact()
@@ -276,9 +297,15 @@ final class LockOnBase {
                 AbstractContainerMenu menu=mc.player.containerMenu;
                 if(!(menu instanceof ChestMenu))return false;
                 int from=menu.slots.size()-36;
+                java.util.Map<Item,Integer> reserves=new java.util.HashMap<>();
                 for(int i=from;i<menu.slots.size();i++){
                     ItemStack item=menu.getSlot(i).getItem();
-                    if(item.isEmpty() || keep(item))continue;
+                    if(item.isEmpty()) continue;
+                    int retained=reserves.getOrDefault(item.getItem(),0);
+                    if(keep(item) && retained<64) {
+                        reserves.put(item.getItem(),retained+item.getCount());
+                        continue;
+                    }
                     // Only one shift-click every couple ticks. If chest is
                     // full the server refuses it, and this phase times out.
                     input(mc,i,0,ContainerInput.QUICK_MOVE);
@@ -298,6 +325,7 @@ final class LockOnBase {
     }
 
     private static void advance(Minecraft mc) {
+        equipmentRecipe=null;
         if (askedOpen)close(mc);
         craftJob=null;
         moveStage=0;
@@ -368,7 +396,11 @@ final class LockOnBase {
     }
 
     private static boolean hasTool(LocalPlayer player,Item item) {
-        return countInventory(player,item)>0;
+        for(int i=0;i<36;i++) {
+            ItemStack s=player.getInventory().getItem(i);
+            if(s.is(item) && usable(s)) return true;
+        }
+        return false;
     }
 
     private static int countInventory(LocalPlayer player,Item item) {
@@ -383,7 +415,8 @@ final class LockOnBase {
     private static Item findCompactionMaterial(LocalPlayer player){
         for(int i=0;i<36;i++){
             ItemStack s=player.getInventory().getItem(i);
-            if(!s.isEmpty() && SurvivalPolicy.canCompact(itemId(s),s.getCount()))
+            if(!s.isEmpty() && !s.is(Items.IRON_INGOT) && !s.is(Items.COAL)
+                && !s.is(Items.DIAMOND) && SurvivalPolicy.canCompact(itemId(s),s.getCount()))
                 return s.getItem();
         }
         return null;
@@ -464,11 +497,65 @@ final class LockOnBase {
     }
 
     private static boolean keep(ItemStack s){
-        if(s.is(ItemTags.PICKAXES) || s.is(ItemTags.SWORDS)) return true;
+        if(s.is(ItemTags.PICKAXES) || s.is(ItemTags.SWORDS) || s.is(ItemTags.AXES)
+            || s.is(ItemTags.SHOVELS) || s.is(ItemTags.HOES)) return usable(s);
+        if(s.is(ItemTags.LOGS)||s.is(ItemTags.PLANKS)||s.is(Items.STICK)
+            ||s.is(Items.COAL)||s.is(Items.CHARCOAL)||s.is(Items.IRON_INGOT)
+            ||s.is(Items.COBBLESTONE)||s.is(Items.WHEAT_SEEDS)||s.is(Items.WHEAT)
+            ||s.is(Items.BEETROOT_SEEDS)||s.is(Items.IRON_HELMET)||s.is(Items.IRON_CHESTPLATE)
+            ||s.is(Items.IRON_LEGGINGS)||s.is(Items.IRON_BOOTS)||LockOnFood.edible(s)) return true;
         if(s.is(Items.BREAD)||s.is(Items.BAKED_POTATO)||s.is(Items.APPLE)
             || s.is(Items.GOLDEN_CARROT)||s.is(Items.COOKED_BEEF)
             || s.is(Items.COOKED_CHICKEN)||s.is(Items.COOKED_PORKCHOP)
             || s.is(Items.COOKED_MUTTON)||s.is(Items.GOLDEN_APPLE))return true;
+        return false;
+    }
+
+    private record Equipment(Item result, Item material, int[] cells, int[] sticks, int armorSlot) {}
+    private static Equipment equipmentRecipe;
+    private static final Equipment[] EQUIPMENT = {
+        new Equipment(Items.IRON_CHESTPLATE,Items.IRON_INGOT,new int[]{1,3,4,5,6,7,8,9},new int[]{},6),
+        new Equipment(Items.IRON_LEGGINGS,Items.IRON_INGOT,new int[]{1,2,3,4,6,7,9},new int[]{},7),
+        new Equipment(Items.IRON_HELMET,Items.IRON_INGOT,new int[]{1,2,3,4,6},new int[]{},5),
+        new Equipment(Items.IRON_BOOTS,Items.IRON_INGOT,new int[]{4,6,7,9},new int[]{},8),
+        new Equipment(Items.IRON_SWORD,Items.IRON_INGOT,new int[]{2,5},new int[]{8},-1),
+        new Equipment(Items.IRON_AXE,Items.IRON_INGOT,new int[]{1,2,4},new int[]{5,8},-1),
+        new Equipment(Items.IRON_SHOVEL,Items.IRON_INGOT,new int[]{2},new int[]{5,8},-1),
+        new Equipment(Items.IRON_HOE,Items.IRON_INGOT,new int[]{1,2},new int[]{5,8},-1)
+    };
+
+    private static boolean usable(ItemStack stack) {
+        return !stack.isEmpty() && (!stack.isDamageableItem()
+            || stack.getMaxDamage()-stack.getDamageValue()>16);
+    }
+
+    private static Equipment nextEquipment(Minecraft mc) {
+        for(Equipment e:EQUIPMENT) {
+            if(e.armorSlot()>=0 && usable(mc.player.inventoryMenu.getSlot(e.armorSlot()).getItem())) continue;
+            if(!hasTool(mc.player,e.result()) && countInventory(mc.player,e.material())>=e.cells().length+3
+                && countInventory(mc.player,Items.STICK)>=e.sticks().length) return e;
+        }
+        return null;
+    }
+
+    static boolean equipArmor(Minecraft mc) {
+        if(!(mc.player.containerMenu instanceof InventoryMenu)) return false;
+        for(Equipment e:EQUIPMENT) {
+            if(e.armorSlot()<0 || usable(mc.player.inventoryMenu.getSlot(e.armorSlot()).getItem())) continue;
+            for(int i=9;i<45;i++) {
+                ItemStack stack=mc.player.inventoryMenu.getSlot(i).getItem();
+                if(!stack.is(e.result()) || !usable(stack)) continue;
+                // Swap worn armor into the inventory before equipping the replacement.
+                int worn=e.armorSlot();
+                if(!mc.player.inventoryMenu.getSlot(worn).getItem().isEmpty()) {
+                    boolean free=false;
+                    for(int j=9;j<45;j++) if(mc.player.inventoryMenu.getSlot(j).getItem().isEmpty()) free=true;
+                    if(!free) return false;
+                    mc.gameMode.handleContainerInput(mc.player.containerMenu.containerId,worn,0,ContainerInput.QUICK_MOVE,mc.player);
+                } else mc.gameMode.handleContainerInput(mc.player.containerMenu.containerId,i,0,ContainerInput.QUICK_MOVE,mc.player);
+                return true;
+            }
+        }
         return false;
     }
 
@@ -526,7 +613,7 @@ final class LockOnBase {
                 input(mc,ing.grid(),1,ContainerInput.PICKUP);
                 job.action=2;
             }else{
-                input(mc,job.source,0,ContainerInput.PICKUP);
+                if(!menu.getCarried().isEmpty()) input(mc,job.source,0,ContainerInput.PICKUP);
                 job.action=0;
                 job.progress++;
             }

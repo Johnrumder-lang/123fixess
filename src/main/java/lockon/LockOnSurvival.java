@@ -77,6 +77,9 @@ public final class LockOnSurvival {
 
     private LockOnSurvival() {}
 
+    private static BlockPos retreatOrigin;
+    private static int safeTicks;
+
     public static boolean enabled() { return phase != Phase.OFF; }
     public static boolean managingContainer() {
         return (phase == Phase.BASE && LockOnBase.managingContainer())
@@ -99,6 +102,9 @@ public final class LockOnSurvival {
         LocalPlayer me = mc.player;
         if (mc.level == null || me == null || !me.isAlive() || me.isSpectator()) return;
         world = mc.level;
+        retreatOrigin=null;
+        safeTicks=0;
+        LockOnFood.reset();
         base = BlockPos.containing(me.getX(), me.getY() + 0.08, me.getZ());
         tunnelDirection = Direction.fromYRot(me.getYRot());
         if (tunnelDirection.getAxis().isVertical()) tunnelDirection = Direction.NORTH;
@@ -118,7 +124,7 @@ public final class LockOnSurvival {
         LockOnBase.reset();
         LockOnBootstrap.reset(mc,base,baseFacing);
         notice(me, "Autoplay ON at " + base.toShortString()
-            + ": gathering wood and crafting first. P stops anytime.");
+            + ": gathering wood and crafting first. F7 stops anytime.");
     }
 
     public static void stop(Minecraft mc, String message) {
@@ -152,11 +158,6 @@ public final class LockOnSurvival {
             me.sendOverlayMessage(Component.literal(
                 "[LockOn F7 ACTIVE #" + ticks + "] " + phase + ": " + operation));
         }
-        if (LockOnMovement.stuck()) {
-            pause(mc,"Movement request received but character hasn't moved for 70 ticks. "
-                + "Check collision, server restrictions and the U input diagnostics.");
-            return;
-        }
         // The only screen this bot is allowed to automate is its OWN chest,
         // furnace or crafting-table session. Never interact with other GUIs.
         if (mc.gui.screen() != null && !managingContainer()) {
@@ -183,16 +184,48 @@ public final class LockOnSurvival {
         // code ran EAT -> PAUSED before DEFEND and ignored monsters while
         // crafting or near the home base. Never run ordinary crafting work
         // when a hostile entity has reached melee approach distance.
-        if (enemyNear && LockOnSettings.survivalFightMobs()
-            && me.getHealth() > 9.0f) {
-            if (phase == Phase.BASE && mc.gui.screen() != null) {
-                LockOnBase.stop(mc);
-                phase = Phase.PAUSED;
-                reason = "Hostile mob near the base: closed container to defend";
+        int threats=0;
+        Monster danger=hostile;
+        for(Entity entity:mc.level.entitiesForRendering()) {
+            if(entity instanceof Monster monster && monster.isAlive() && monster.distanceToSqr(me)<64) {
+                threats++;
+                if(monster instanceof Creeper) danger=monster;
             }
-            cancelDig(mc);
-            fightHostile(mc, me, hostile);
+        }
+        if(danger!=null && danger.distanceToSqr(me)<64
+            && SurvivalPolicy.shouldFlee(me.getHealth(),danger instanceof Creeper,threats,
+                LockOnSettings.survivalFightMobs())) {
+            flee(mc,danger);
             return;
+        }
+        if (enemyNear && LockOnSettings.survivalFightMobs() && me.getHealth()>9) {
+            interruptWork(mc);
+            fightHostile(mc,me,hostile);
+            return;
+        }
+        if(retreatOrigin!=null) {
+            if(++safeTicks<40) {release(mc);tryEat(mc,me);return;}
+            if(LockOnTravel.walk(mc,retreatOrigin)) retreatOrigin=null;
+            reason="Returning to interrupted work after danger";
+            return;
+        }
+        if(LockOnMovement.stuck()) {
+            release(mc);
+            reason="Replanning blocked movement";
+            if(phase==Phase.TUNNEL) phase=Phase.RETURN;
+        }
+        if(LockOnTravel.openGate(mc)) {release(mc);return;}
+        if(!managingContainer() && me.containerMenu instanceof InventoryMenu) {
+            if(LockOnBase.equipArmor(mc)) return;
+            if(me.getFoodData().getFoodLevel()<18 && LockOnSettings.survivalAutoEat()
+                && tryEat(mc,me)) {release(mc);return;}
+            if((LockOnFood.count(mc)<8 || LockOnFood.pending())
+                && Math.abs(me.getY()-base.getY())<3) {
+                reason="Gathering nearby mature crops/berries and replanting";
+                LockOnFood.tick(mc);
+                // Allow mining when food reserves are adequate and nothing is pending.
+                if(me.getFoodData().getFoodLevel()<=8 || LockOnFood.pending()) return;
+            }
         }
         if (phase == Phase.BASE) {
             release(mc);
@@ -202,16 +235,9 @@ public final class LockOnSurvival {
                     tunnelDirection = tunnelDirection.getClockWise();
                     steps = 0;
                     startTick = ticks;
-                    if (!hasWorkingPickaxe(me)) {
-                        phase = Phase.BOOTSTRAP;
-                        LockOnBootstrap.reset(mc, base, baseFacing);
-                        reason = "No pickaxe: returning to wood/sticks/tool crafting";
-                        notice(me,"No usable pickaxe. Crafting a new one BEFORE mining.");
-                    } else {
-                        reason = "Tool checked; starting mining cycle " + (cycles + 1);
-                        phase = Phase.TUNNEL;
-                        notice(me,"Base processed; starting next tunnel with pickaxe.");
-                    }
+                    phase = Phase.BOOTSTRAP;
+                    LockOnBootstrap.reset(mc,base,baseFacing);
+                    reason="Restocking wood, sticks and tools for next cycle";
                 } else {
                     stop(mc,"Mining and base processing complete. "+status());
                 }
@@ -222,10 +248,11 @@ public final class LockOnSurvival {
         SurvivalPolicy.Decision decision = SurvivalPolicy.decide(
             me.getHealth(), me.getFoodData().getFoodLevel(),
             me.isOnFire(), me.isInLava(), me.isInWall(), enemyNear,
-            free, steps, LockOnSettings.stripLength());
+            free, steps, cycleLength());
 
         if (decision == SurvivalPolicy.Decision.STOP) {
-            pause(mc, "Survival danger: paused");
+            reason="Waiting for safe survival conditions";
+            release(mc);
             return;
         }
         if (decision == SurvivalPolicy.Decision.RETREAT) {
@@ -242,11 +269,19 @@ public final class LockOnSurvival {
             release(mc);
             if (tryEat(mc, me)) return;
             // Do not start a long tunnel while starving and unable to eat.
-            pause(mc, "No safe food in hotbar (or low hunger)");
+            if(steps>0) {phase=Phase.RETURN;returnToBase(mc,me);}
+            else {reason="Searching nearby crops and berries for food";LockOnFood.tick(mc);}
             return;
         }
         if (eating) stopEating(mc);
-        if (phase == Phase.PAUSED) { release(mc); return; }
+        if (phase == Phase.PAUSED) {
+            release(mc);
+            if(ticks%100==0) {
+                if(steps>0) phase=Phase.RETURN;
+                else {phase=Phase.BOOTSTRAP;LockOnBootstrap.reset(mc,base,baseFacing);}
+            }
+            return;
+        }
 
         if (phase == Phase.BOOTSTRAP) {
             if (LockOnBootstrap.tick(mc)) {
@@ -594,7 +629,7 @@ public final class LockOnSurvival {
         if (enemy instanceof Creeper && dist < 4.0) {
             release(mc);
             reason = "Creeper close: avoid rushing into explosion radius";
-            phase = Phase.RETURN;
+            flee(mc,enemy);
             return;
         }
         if (!enemy.getUUID().equals(mobTargetId)) {
@@ -660,17 +695,17 @@ public final class LockOnSurvival {
         if(eating && !me.isUsingItem() && foodSlot>=0 && ticks%3!=0)
             return true;
         foodSlot=-1;
-        for(int i=0;i<9;i++){
+        for(int i=0;i<36;i++){
             ItemStack food=me.getInventory().getItem(i);
             if(food.isEmpty())continue;
-            if(food.is(Items.BREAD) || food.is(Items.BAKED_POTATO)
-                || food.is(Items.COOKED_BEEF) || food.is(Items.COOKED_CHICKEN)
-                || food.is(Items.COOKED_PORKCHOP) || food.is(Items.COOKED_MUTTON)
-                || food.is(Items.GOLDEN_CARROT) || food.is(Items.APPLE)
-                || food.is(Items.COOKED_SALMON) || food.is(Items.COOKED_COD)
-                || food.is(Items.GOLDEN_APPLE)) {foodSlot=i;break;}
+            if(LockOnFood.edible(food)) {foodSlot=i;break;}
         }
         if(foodSlot<0)return false;
+        if(foodSlot>=9) {
+            if(!(me.containerMenu instanceof InventoryMenu)) return false;
+            mc.gameMode.handleContainerInput(me.containerMenu.containerId,foodSlot,8,ContainerInput.SWAP,me);
+            return true;
+        }
         me.getInventory().setSelectedSlot(foodSlot);
         mc.gameMode.useItem(me,InteractionHand.MAIN_HAND);
         mc.options.keyUse.setDown(true);
@@ -688,7 +723,7 @@ public final class LockOnSurvival {
     // A shallow staircase from the original surface home into stone.
     // Revisit every waypoint in reverse on return; no teleportation.
     private static BlockPos tunnelPoint(int index) {
-        int interval = Math.max(2, 4 - cycles / 4);
+        int interval = 4;
         int depth = Math.min(24, Math.max(0,index) / interval);
         return base.relative(tunnelDirection,Math.max(0,index)).below(depth);
     }
@@ -712,7 +747,8 @@ public final class LockOnSurvival {
             return;
         }
         if (d > 3.0) {
-            pause(mc,"Lost original return path; manual help needed");
+            LockOnTravel.walk(mc,destination);
+            reason="Rejoining return route";
             return;
         }
         boolean uphill=destination.getY()>me.getY()+0.35;
@@ -728,6 +764,39 @@ public final class LockOnSurvival {
             destination.getZ()+0.5));
         moveForward(mc,false);
         LockOnMovement.jump(mc,uphill);
+    }
+
+    private static int cycleLength() {
+        return LockOnSettings.stripLength() + (cycles/4)*16;
+    }
+
+    private static void interruptWork(Minecraft mc) {
+        cancelDig(mc);
+        stopEating(mc);
+        if(phase==Phase.BOOTSTRAP) LockOnBootstrap.reset(mc,base,baseFacing);
+        if(phase==Phase.BASE) {LockOnBase.stop(mc);LockOnBase.reset();}
+    }
+
+    private static void flee(Minecraft mc,Monster danger) {
+        if(retreatOrigin==null) {
+            retreatOrigin=mc.player.blockPosition();
+            interruptWork(mc);
+        }
+        safeTicks=0;
+        Vec3 away=mc.player.position().subtract(danger.position());
+        double angle=Math.atan2(away.z,away.x);
+        for(double offset:new double[]{0,0.6,-0.6,1.2,-1.2,1.57,-1.57}) {
+            double dx=Math.cos(angle+offset), dz=Math.sin(angle+offset);
+            if(Navigator.safeForward(mc.level,mc.player,dx,dz)) {
+                face(mc,mc.player.getEyePosition().add(dx,0,dz));
+                moveForward(mc,mc.player.getFoodData().getFoodLevel()>6);
+                reason="Fleeing danger: "+danger.getName().getString();
+                return;
+            }
+        }
+        release(mc);
+        reason="Escape blocked; seeking an open gate";
+        LockOnTravel.openGate(mc);
     }
 
     private static void face(LocalPlayer me,Vec3 target) {
@@ -750,7 +819,7 @@ public final class LockOnSurvival {
         release(mc);
         reason=why;
         phase=Phase.PAUSED;
-        if(mc.player!=null)notice(mc.player,why+" (P to stop)");
+        if(mc.player!=null)notice(mc.player,why+" (F7 to stop)");
     }
 
     private static void notice(LocalPlayer player,String message) {

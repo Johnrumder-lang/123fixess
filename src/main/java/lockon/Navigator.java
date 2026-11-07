@@ -52,10 +52,12 @@ final class Navigator {
     private Navigator() {}
 
     static Step route(ClientLevel level, LocalPlayer player, Player target, boolean mine) {
+        return route(level, player, target.getX(), target.getY(), target.getZ(), mine);
+    }
+
+    static Step route(ClientLevel level, LocalPlayer player,
+                      double goalX, double goalY, double goalZ, boolean mine) {
         BlockPos from = BlockPos.containing(player.getX(), player.getY() + 0.08, player.getZ());
-        double goalX = target.getX();
-        double goalZ = target.getZ();
-        double goalY = target.getY();
         PriorityQueue<Node> open = new PriorityQueue<>(Comparator.comparingDouble(n -> n.f));
         Map<BlockPos, Double> bestCosts = new HashMap<>();
         Node start = new Node(from, null, null, null, 0, estimate(from, goalX, goalY, goalZ));
