@@ -47,20 +47,20 @@ jobs:
         run: gradle --no-daemon -p server-paper build --stacktrace
       - name: Publish versioned JAR after successful build
         run: |
-          test -s build/libs/lockon-3.1.0.jar
-          test -s server-paper/build/libs/lockon-paper-3.1.0.jar
-          cp build/libs/lockon-3.1.0.jar LockOn-26.3-v3.1.0.jar
-          cp server-paper/build/libs/lockon-paper-3.1.0.jar LockOn-Server-Paper-26.3-v3.1.0.jar
+          test -s build/libs/lockon-3.2.0.jar
+          test -s server-paper/build/libs/lockon-paper-3.2.0.jar
+          cp build/libs/lockon-3.2.0.jar LockOn-26.3-v3.2.0.jar
+          cp server-paper/build/libs/lockon-paper-3.2.0.jar LockOn-Server-Paper-26.3-v3.2.0.jar
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add -f LockOn-26.3-v3.1.0.jar LockOn-Server-Paper-26.3-v3.1.0.jar
+          git add -f LockOn-26.3-v3.2.0.jar LockOn-Server-Paper-26.3-v3.2.0.jar
           if ! git diff --cached --quiet; then
-            git commit -m 'Publish LockOn-26.3-v3.1.0.jar [skip ci]'
+            git commit -m 'Publish LockOn-26.3-v3.2.0.jar [skip ci]'
             git push
           fi
       - uses: actions/upload-artifact@v4
         with:
-          name: LockOn-26.3-v3.1.0
+          name: LockOn-26.3-v3.2.0
           path: |
-            LockOn-26.3-v3.1.0.jar
-            LockOn-Server-Paper-26.3-v3.1.0.jar
+            LockOn-26.3-v3.2.0.jar
+            LockOn-Server-Paper-26.3-v3.2.0.jar

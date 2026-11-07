@@ -45,5 +45,19 @@ assert "Items.STICK,new int[]{5,8}" in base
 assert "FURNACE" in base and "SMELT" in base
 assert "pickupTarget" in bootstrap
 assert "Log broken: walking over to collect drops" in bootstrap
+# v3.2: crafting table must be faced and clicks must be validated.
+assert "lookForInteraction(player,table.below(),hit)" in bootstrap
+assert "lookForInteraction(player,table,target)" in bootstrap
+assert "supportHit=mc.level.clip(new ClipContext(" in bootstrap
+assert "tableHit=mc.level.clip(new ClipContext(" in bootstrap
+assert "aimedWood" in bootstrap and "woodAimTick" in bootstrap
+assert "cleanupCraftingGrid(mc)" in bootstrap
+assert "Returning unused recipe ingredients" in bootstrap
+assert "Crafting grid has other items" not in bootstrap
+assert "job.resultClickedAt=ticks" in bootstrap
+assert "outputCount(mc.player,job.output)>job.startingCount" in bootstrap
+assert "Pickaxe missing planks or sticks: returning to wood gathering" in bootstrap
+assert "Recipe failed:" in bootstrap
+assert "mc.gameMode.startDestroyBlock(treeBlock,digFace)" in bootstrap
 print("Mining look-down, tool gate, tool swap and iron/furnace regression checks: pass")
 print("Survival wood-to-tools progression, repeat and no-special-commands: pass")

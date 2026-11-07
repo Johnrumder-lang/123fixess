@@ -29,6 +29,16 @@ public final class AutoplayPlanTest {
             AutoplayPlan.next(0,5,0,false,true,false));
         check(AutoplayPlan.Action.MAKE_PICKAXE,
             AutoplayPlan.next(0,3,2,false,true,false));
-        System.out.println("Autoplay progression: eleven tests passed");
+        check(AutoplayPlan.Action.MAKE_TABLE,
+            AutoplayPlan.next(0,4,0,false,false,false));
+        check(AutoplayPlan.Action.GATHER_WOOD,
+            AutoplayPlan.next(0,0,4,false,true,false));
+        check(AutoplayPlan.Action.MAKE_PLANKS,
+            AutoplayPlan.next(1,0,4,false,true,false));
+        check(AutoplayPlan.Action.MAKE_PICKAXE,
+            AutoplayPlan.next(0,3,2,false,true,false));
+        check(AutoplayPlan.Action.GATHER_WOOD,
+            AutoplayPlan.next(0,2,2,false,true,false));
+        System.out.println("Autoplay progression: sixteen tests passed");
     }
 }

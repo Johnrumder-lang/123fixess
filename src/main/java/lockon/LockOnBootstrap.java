@@ -46,16 +46,28 @@ final class LockOnBootstrap {
     private static RecipeJob recipe;
     private static boolean openedTable;
     private static int openTick;
+    private static Direction digFace = Direction.UP;
+    private static BlockPos aimedWood;
+    private static int woodAimTick;
+    private static BlockPos lastLookTarget;
+    private static int lookStartTick, lastStationUseTick=-1000;
+    private static int stationAttempts;
+    private static boolean cleaningRecipe;
+    private static int cleaningTicks;
     private static final int SEARCH_RADIUS = 13;
 
     private static final class RecipeJob {
         final boolean table;
         final Item output;
         final List<Ingredient> ingredients;
+        final int createdTick;
         int ingredient, action, outputWait;
-        int source = -1;
-        RecipeJob(boolean table, Item output, List<Ingredient> ingredients) {
+        int source = -1, startingCount, resultClickedAt=-1;
+        boolean placedOwnIngredients;
+        RecipeJob(boolean table, Item output, List<Ingredient> ingredients,
+                  int createdTick, int startingCount) {
             this.table=table; this.output=output; this.ingredients=ingredients;
+            this.createdTick=createdTick; this.startingCount=startingCount;
         }
     }
 
@@ -71,11 +83,20 @@ final class LockOnBootstrap {
             .relative(direction.getClockWise(),2);
         treeBlock=digTarget=pickupTarget=null;
         pickupUntil=0;
+        aimedWood=null;
+        digFace=Direction.UP;
+        woodAimTick=0;
         ticks=0;
         lastClick=-20;
         lastDigTick=0;
         lastMoveTick=0;
         noProgress=0;
+        lastLookTarget=null;
+        lookStartTick=0;
+        lastStationUseTick=-1000;
+        stationAttempts=0;
+        cleaningRecipe=false;
+        cleaningTicks=0;
         logsMined=recipes=woodSearches=0;
         detail="Locating wood";
         step=Step.WOOD;
@@ -98,7 +119,10 @@ final class LockOnBootstrap {
         }
         openedTable=false;
         recipe=null;
+        cleaningRecipe=false;
+        lastLookTarget=null;
         digTarget=null;
+        aimedWood=null;
         pickupTarget=null;
         release(mc);
     }
@@ -114,22 +138,29 @@ final class LockOnBootstrap {
         ticks++;
         if(step==Step.WAIT) {
             release(mc);
-            // A missing tree or temporary inventory delay must not produce a
-            // fake "finished" message. Retry discovery periodically, while
-            // leaving control with P at any time.
-            if(ticks%200==0){
+            // The inventory or world might change while the bot is paused.
+            // Rescan the actual recipe requirements every second rather
+            // than remaining frozen in a one-time "make pickaxe" state.
+            if(ticks%20==0 && !cleaningRecipe){
                 woodSearches=0;
                 treeBlock=null;
                 step=Step.WOOD;
-                detail="Retrying wood and tool progression";
-            }
-            return false;
+                detail="Rechecking materials and resuming progression";
+            } else return false;
         }
         if(ticks%40==0) {
             // Keep the status visible during a long wood-gathering/crafting run.
             player.sendOverlayMessage(Component.literal("[LockOn Auto] "+status()));
         }
+        if (cleaningRecipe) {
+            cleanupCraftingGrid(mc);
+            return false;
+        }
         if(recipe!=null) {
+            detail="Crafting "+recipe.output+": ingredient "
+                +(Math.min(recipe.ingredient+1,recipe.ingredients.size()))
+                +"/"+recipe.ingredients.size()
+                +", action "+recipe.action;
             craftTick(mc);
             return false;
         }
@@ -148,7 +179,7 @@ final class LockOnBootstrap {
                 release(mc);
                 return false;
             }else{
-                mc.gameMode.continueDestroyBlock(digTarget,Direction.UP);
+                mc.gameMode.continueDestroyBlock(digTarget,digFace);
                 return false;
             }
         }
@@ -211,8 +242,8 @@ final class LockOnBootstrap {
                             List.of(new Ingredient(plank,1),new Ingredient(plank,2),
                                 new Ingredient(plank,3),new Ingredient(plank,4)));
                     } else {
-                        detail="Not enough planks for crafting table";
-                        step=Step.WAIT;
+                        detail="Need more wood for crafting table";
+                        step=Step.WOOD;
                     }
                 }
             }
@@ -221,13 +252,14 @@ final class LockOnBootstrap {
                 if(plank!=null && count(player,plank)>=2){
                     startCraft(false,Items.STICK,
                         List.of(new Ingredient(plank,1),new Ingredient(plank,3)));
-                } else {detail="Not enough planks for sticks";step=Step.WAIT;}
+                } else {detail="Need more planks for sticks";step=Step.WOOD;}
             }
             case PICKAXE -> {
                 Item plank=findItem(player,ItemTags.PLANKS);
-                if(plank==null || count(player,plank)<3) {
-                    detail="Not enough planks for wooden pickaxe";
-                    step=Step.WAIT;
+                if(plank==null || count(player,plank)<3
+                    || count(player,Items.STICK)<2) {
+                    detail="Pickaxe missing planks or sticks: returning to wood gathering";
+                    step=Step.WOOD;
                     return false;
                 }
                 if(!openWorkbench(mc,player))return false;
@@ -246,6 +278,7 @@ final class LockOnBootstrap {
         if(treeBlock==null || mc.level.getBlockState(treeBlock).isAir()
             || ticks%60==0){
             treeBlock=findTree(mc,player);
+            aimedWood=null;
             woodSearches++;
         }
         if(treeBlock==null){
@@ -292,9 +325,17 @@ final class LockOnBootstrap {
             treeBlock=null;
             return;
         }
+        if(aimedWood==null || !aimedWood.equals(treeBlock)) {
+            aimedWood=treeBlock;
+            woodAimTick=ticks;
+            detail="Aiming at tree before punching";
+            return;
+        }
+        if(ticks-woodAimTick<2)return;
         digTarget=treeBlock;
+        digFace=hit.getDirection();
         lastDigTick=ticks;
-        mc.gameMode.startDestroyBlock(treeBlock,Direction.UP);
+        mc.gameMode.startDestroyBlock(treeBlock,digFace);
         detail="Punching nearby tree "+treeBlock.toShortString();
     }
 
@@ -338,67 +379,137 @@ final class LockOnBootstrap {
         return false;
     }
 
+    private static boolean lookForInteraction(LocalPlayer player,
+                                              BlockPos block, Vec3 hitPoint) {
+        if (lastLookTarget == null || !lastLookTarget.equals(block)) {
+            lastLookTarget=block;
+            lookStartTick=ticks;
+        }
+        rotate(player,hitPoint);
+        // Vanilla server checks the player's look direction. It must arrive
+        // before an item-on-block packet for table placement or interaction.
+        return ticks-lookStartTick>=2;
+    }
+
     private static void placeWorkbench(Minecraft mc,LocalPlayer player){
-        if(hasTable(mc))return;
+        if (hasTable(mc)) {
+            stationAttempts=0;
+            lastLookTarget=null;
+            return;
+        }
         if(!mc.level.getBlockState(table).isAir()
             || mc.level.getBlockState(table.below()).isAir()){
-            detail="Base workbench position obstructed; reposition P on flat ground";
+            detail="Cannot place workbench on obstructed or unsupported ground";
             step=Step.WAIT;
+            release(mc);
             return;
         }
         int slot=hotbarSlot(player,Items.CRAFTING_TABLE);
         if(slot<0){
             moveItemToHotbar(mc,Items.CRAFTING_TABLE);
-            detail="Moving crafted table into hotbar";
+            detail="Moving crafted table to hotbar";
             return;
         }
         double d=player.getEyePosition().distanceTo(Vec3.atCenterOf(table));
         if(d>4.15){
+            lastLookTarget=null;
             double dx=table.getX()+0.5-player.getX();
             double dz=table.getZ()+0.5-player.getZ();
             if(!Navigator.safeForward(mc.level,player,dx,dz)){
-                detail="Can't safely reach base workbench site";
+                detail="Path to workbench site blocked: cannot craft pickaxe yet";
                 step=Step.WAIT;release(mc);return;
             }
             rotate(player,new Vec3(table.getX()+0.5,player.getEyeY(),table.getZ()+0.5));
             moveForward(mc);
+            detail="Walking back to crafting-table location";
             return;
         }
         release(mc);
         player.getInventory().setSelectedSlot(slot);
-        mc.gameMode.useItemOn(player,InteractionHand.MAIN_HAND,
-            new BlockHitResult(Vec3.atCenterOf(table.below()).add(0,0.5,0),
-                Direction.UP,table.below(),false));
-        detail="Placing crafting table at base";
+        Vec3 hit=new Vec3(table.getX()+0.5,table.getY(),table.getZ()+0.5);
+        if(!lookForInteraction(player,table.below(),hit)) {
+            detail="Looking down to place crafting table";
+            return;
+        }
+        if(ticks-lastStationUseTick<14)return;
+        if(stationAttempts>=5) {
+            step=Step.WAIT;
+            detail="Workbench placement rejected (ground/protection/reach)";
+            return;
+        }
+        BlockHitResult supportHit=mc.level.clip(new ClipContext(
+            player.getEyePosition(),hit,
+            ClipContext.Block.COLLIDER,ClipContext.Fluid.NONE,player));
+        if(supportHit.getType()!=HitResult.Type.BLOCK
+            || !supportHit.getBlockPos().equals(table.below())) {
+            detail="Workbench placement: floor not visible from player";
+            step=Step.WAIT;
+            return;
+        }
+        mc.gameMode.useItemOn(player,InteractionHand.MAIN_HAND,supportHit);
+        stationAttempts++;
+        lastStationUseTick=ticks;
+        detail="Placing crafting table (attempt "+stationAttempts+")";
     }
 
     private static boolean openWorkbench(Minecraft mc,LocalPlayer player) {
-        if(player.containerMenu instanceof CraftingMenu)return true;
+        if(player.containerMenu instanceof CraftingMenu) {
+            openedTable=true;
+            stationAttempts=0;
+            return true;
+        }
         if(openedTable) {
-            if(ticks-openTick>50) {
+            if(ticks-openTick>40) {
                 openedTable=false;
-                step=Step.WAIT;
-                detail="Crafting table did not open";
+                if(++stationAttempts>=4) {
+                    step=Step.WAIT;
+                    detail="Workbench did not open after four attempts";
+                } else {
+                    detail="Workbench opening not confirmed; trying again";
+                }
             }
             return false;
         }
-        if(player.getEyePosition().distanceTo(Vec3.atCenterOf(table))>4.3){
+        if(table==null || !hasTable(mc)) {
+            detail="Workbench missing: gathering/crafting replacement";
+            step=Step.WOOD;
+            return false;
+        }
+        if(player.getEyePosition().distanceTo(Vec3.atCenterOf(table))>4.0) {
+            lastLookTarget=null;
             double dx=table.getX()+0.5-player.getX(),dz=table.getZ()+0.5-player.getZ();
             if(!Navigator.safeForward(mc.level,player,dx,dz)){
-                step=Step.WAIT;detail="Cannot approach crafting table";
+                step=Step.WAIT;
+                detail="Workbench unreachable from current position";
+                release(mc);
                 return false;
             }
             rotate(player,new Vec3(table.getX()+0.5,player.getEyeY(),table.getZ()+0.5));
             moveForward(mc);
+            detail="Walking to crafting table";
             return false;
         }
         release(mc);
-        mc.gameMode.useItemOn(player,InteractionHand.MAIN_HAND,
-            new BlockHitResult(Vec3.atCenterOf(table),
-                Direction.UP,table,false));
+        Vec3 target=Vec3.atCenterOf(table);
+        if(!lookForInteraction(player,table,target)) {
+            detail="Looking at crafting table to open it";
+            return false;
+        }
+        if(ticks-lastStationUseTick<12)return false;
+        BlockHitResult tableHit=mc.level.clip(new ClipContext(
+            player.getEyePosition(),target,
+            ClipContext.Block.COLLIDER,ClipContext.Fluid.NONE,player));
+        if(tableHit.getType()!=HitResult.Type.BLOCK
+            || !tableHit.getBlockPos().equals(table)) {
+            detail="Workbench blocked by another block";
+            step=Step.WAIT;
+            return false;
+        }
+        mc.gameMode.useItemOn(player,InteractionHand.MAIN_HAND,tableHit);
         openedTable=true;
         openTick=ticks;
-        detail="Opening crafting table";
+        lastStationUseTick=ticks;
+        detail="Opening crafting-table GUI";
         return false;
     }
 
@@ -463,69 +574,175 @@ final class LockOnBootstrap {
     }
 
     private static void startCraft(boolean tableMenu,Item result,List<Ingredient> ingredients){
-        recipe=new RecipeJob(tableMenu,result,ingredients);
-        detail="Crafting "+result+" from inventory";
+        recipe=new RecipeJob(tableMenu,result,ingredients,ticks,-1);
+        detail="Crafting "+result+" (0/"+ingredients.size()+" ingredients)";
+    }
+
+    private static int outputCount(LocalPlayer player,Item output) {
+        return output == Items.OAK_PLANKS
+            ? countTag(player,ItemTags.PLANKS) : count(player,output);
+    }
+
+    private static boolean matchesOutput(ItemStack stack,Item expected) {
+        return expected == Items.OAK_PLANKS
+            ? stack.is(ItemTags.PLANKS) : stack.is(expected);
+    }
+
+    private static void failCraft(Minecraft mc,String why) {
+        RecipeJob failed=recipe;
+        boolean touchedOwnGrid=failed!=null && failed.placedOwnIngredients;
+        boolean grabbedSource=failed!=null && failed.action>0;
+        recipe=null;
+        cleaningRecipe=touchedOwnGrid || grabbedSource;
+        cleaningTicks=ticks;
+        detail=cleaningRecipe
+            ? "Recipe failed: "+why+"; returning bot ingredients to inventory"
+            : "Recipe failed: "+why+"; checking wood/planks/sticks";
+        if(!cleaningRecipe) {
+            // Do not modify an occupied grid that belonged to the player.
+            step=Step.WAIT;
+        }
+    }
+
+    private static void cleanupCraftingGrid(Minecraft mc) {
+        if(ticks-lastClick<3) return;
+        if(ticks-cleaningTicks>160) {
+            cleaningRecipe=false;
+            step=Step.WAIT;
+            detail="Craft grid could not be recovered; clear it manually";
+            closeTable(mc);
+            return;
+        }
+        AbstractContainerMenu menu=mc.player.containerMenu;
+        boolean tableMenu=menu instanceof CraftingMenu;
+        if(!tableMenu && !(menu instanceof InventoryMenu)) {
+            cleaningRecipe=false;
+            openedTable=false;
+            step=Step.WOOD;
+            return;
+        }
+        int firstInventorySlot=tableMenu?10:9;
+        if(!menu.getCarried().isEmpty()) {
+            for(int i=firstInventorySlot;i<menu.slots.size();i++) {
+                if(menu.getSlot(i).getItem().isEmpty()
+                    && menu.getSlot(i).mayPlace(menu.getCarried())) {
+                    click(mc,i,0,ContainerInput.PICKUP);
+                    detail="Recovering crafting cursor";
+                    return;
+                }
+            }
+            step=Step.WAIT;
+            detail="Inventory full: cannot return crafting cursor safely";
+            return;
+        }
+        int endSlot=tableMenu?9:4;
+        for(int i=1;i<=endSlot;i++) {
+            if(!menu.getSlot(i).getItem().isEmpty()) {
+                click(mc,i,0,ContainerInput.QUICK_MOVE);
+                detail="Returning unused recipe ingredients to inventory";
+                return;
+            }
+        }
+        cleaningRecipe=false;
+        if(tableMenu) closeTable(mc);
+        step=Step.WOOD;
+        detail="Recipe materials recovered; checking for more wood/sticks";
     }
 
     private static void craftTick(Minecraft mc) {
-        if(ticks-lastClick<2)return;
+        if(ticks-lastClick<3)return;
         RecipeJob job=recipe;
+        if(job==null) return;
+        if(ticks-job.createdTick>260) {
+            failCraft(mc,"no craft completion in 13 seconds");
+            return;
+        }
         AbstractContainerMenu menu=mc.player.containerMenu;
         if(job.table && !(menu instanceof CraftingMenu)) {
-            recipe=null;step=Step.WAIT;detail="Crafting table closed";return;
+            failCraft(mc,"crafting table menu closed");
+            return;
         }
         if(!job.table && !(menu instanceof InventoryMenu)) {
-            recipe=null;step=Step.WAIT;detail="Player inventory not available";return;
+            failCraft(mc,"inventory menu unavailable");
+            return;
         }
-        // Crafting grids must be empty; don't overwrite the player's own work.
+        if(job.startingCount<0)
+            job.startingCount=outputCount(mc.player,job.output);
+
+        if(job.resultClickedAt>=0) {
+            if(outputCount(mc.player,job.output)>job.startingCount) {
+                recipe=null;
+                recipes++;
+                detail="Crafted "+job.output+"; verifying next materials";
+                if(job.table) closeTable(mc);
+            } else if(ticks-job.resultClickedAt>50) {
+                failCraft(mc,"crafted output did not enter inventory");
+            }
+            return;
+        }
+
+        // An input grid that already contained other items must not be
+        // overwritten. Recover only grids we have started touching.
         if(job.ingredient==0 && job.action==0) {
-            for(Ingredient ingredient:job.ingredients){
-                if(!menu.getSlot(ingredient.slot()).getItem().isEmpty()){
-                    recipe=null;
-                    step=Step.WAIT;
-                    detail="Crafting grid has other items; clear it";
+            for(Ingredient ingredient:job.ingredients) {
+                if(!menu.getSlot(ingredient.slot()).getItem().isEmpty()) {
+                    failCraft(mc,"crafting grid not empty");
                     return;
                 }
             }
         }
-        if(job.ingredient < job.ingredients.size()){
+
+        if(job.ingredient<job.ingredients.size()) {
             Ingredient ingredient=job.ingredients.get(job.ingredient);
-            if(job.action==0){
+            if(job.action==0) {
                 job.source=findSlot(menu,ingredient.item(),job.table?10:9);
-                if(job.source<0){
-                    recipe=null;step=Step.WAIT;
-                    detail="No recipe ingredient "+ingredient.item();
+                if(job.source<0) {
+                    failCraft(mc,"missing "+ingredient.item()+" from inventory");
                     return;
                 }
                 click(mc,job.source,0,ContainerInput.PICKUP);
                 job.action=1;
+                detail="Crafting "+job.output+": picking ingredient "
+                    +(job.ingredient+1)+"/"+job.ingredients.size();
                 return;
             }
-            if(job.action==1){
+            if(job.action==1) {
+                if(menu.getCarried().isEmpty()) {
+                    failCraft(mc,"inventory click did not pick up ingredient");
+                    return;
+                }
                 click(mc,ingredient.slot(),1,ContainerInput.PICKUP);
+                job.placedOwnIngredients=true;
                 job.action=2;
+                detail="Crafting "+job.output+": placing ingredient "
+                    +(job.ingredient+1)+"/"+job.ingredients.size();
                 return;
             }
-            click(mc,job.source,0,ContainerInput.PICKUP);
+            // Return the rest of the cursor stack to its inventory slot.
+            // If the ingredient stack was exhausted, cursor is already empty.
+            if(!menu.getCarried().isEmpty())
+                click(mc,job.source,0,ContainerInput.PICKUP);
             job.action=0;
             job.ingredient++;
             return;
         }
-        if(menu.getSlot(0).getItem().isEmpty()) {
-            if(++job.outputWait>60){
-                recipe=null;
-                step=Step.WAIT;
-                detail="Recipe result did not appear. Need correct ingredients.";
-            }
+
+        ItemStack output=menu.getSlot(0).getItem();
+        if(output.isEmpty()) {
+            if(++job.outputWait>55)
+                failCraft(mc,"recipe output empty (check 3x3 slot layout)");
+            else detail="Waiting for crafting output: "+job.output
+                +" ("+job.outputWait+"/55)";
             return;
         }
-        click(mc,0,0,ContainerInput.QUICK_MOVE);
-        recipe=null;
-        recipes++;
-        detail="Crafted "+job.output;
-        if(job.table) {
-            closeTable(mc);
+        if(!matchesOutput(output,job.output)) {
+            failCraft(mc,"unexpected recipe output "+output.getItem());
+            return;
         }
+
+        click(mc,0,0,ContainerInput.QUICK_MOVE);
+        job.resultClickedAt=ticks;
+        detail="Collecting crafted "+job.output+" from result slot";
     }
 
     private static int findSlot(AbstractContainerMenu menu,Item item,int start) {
