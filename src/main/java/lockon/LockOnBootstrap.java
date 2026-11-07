@@ -565,7 +565,7 @@ final class LockOnBootstrap {
             ItemStack tool=p.getInventory().getItem(i);
             if(tool.is(ItemTags.PICKAXES)
                 && (!tool.isDamageableItem()
-                    || tool.getMaxDamage()-tool.getDamageValue()>3)) return true;
+                    || tool.getMaxDamage()-tool.getDamageValue()>16)) return true;
         }
         return false;
     }

@@ -39,6 +39,14 @@ final class LockOnFood {
             count+=mc.player.getInventory().getItem(i).getCount();
         return count;
     }
+    static boolean hasWheat(Minecraft mc) {
+        int wheat=0;
+        for(int i=0;i<36;i++) {
+            ItemStack stack=mc.player.getInventory().getItem(i);
+            if(stack.is(Items.WHEAT)) wheat+=stack.getCount();
+        }
+        return wheat>=3;
+    }
     static boolean pending() {return replant!=null || target!=null;}
 
     static void tick(Minecraft mc) {

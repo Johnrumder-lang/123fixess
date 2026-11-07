@@ -219,9 +219,15 @@ public final class LockOnSurvival {
             if(LockOnBase.equipArmor(mc)) return;
             if(me.getFoodData().getFoodLevel()<18 && LockOnSettings.survivalAutoEat()
                 && tryEat(mc,me)) {release(mc);return;}
-            if((LockOnFood.count(mc)<8 || LockOnFood.pending())
+            if(phase!=Phase.BASE && phase!=Phase.RETURN
+                && (LockOnFood.count(mc)<8 || LockOnFood.pending())
                 && Math.abs(me.getY()-base.getY())<3) {
                 reason="Gathering nearby mature crops/berries and replanting";
+                if(LockOnFood.hasWheat(mc)) {
+                    phase=Phase.RETURN;
+                    returnToBase(mc,me);
+                    return;
+                }
                 LockOnFood.tick(mc);
                 // Allow mining when food reserves are adequate and nothing is pending.
                 if(me.getFoodData().getFoodLevel()<=8 || LockOnFood.pending()) return;
@@ -589,7 +595,7 @@ public final class LockOnSurvival {
             ItemStack item=me.getInventory().getItem(i);
             if (!item.is(ItemTags.PICKAXES)) continue;
             if (!item.isDamageableItem()
-                || item.getMaxDamage()-item.getDamageValue() > 3) return true;
+                || item.getMaxDamage()-item.getDamageValue() > 16) return true;
         }
         return false;
     }
@@ -661,10 +667,15 @@ public final class LockOnSurvival {
             return;
         }
         int sword=-1;
-        for (int i=0;i<9;i++)
+        for (int i=0;i<36;i++)
             if (me.getInventory().getItem(i).is(ItemTags.SWORDS)) {
                 sword=i;break;
             }
+        if(sword>=9 && me.containerMenu instanceof InventoryMenu) {
+            mc.gameMode.handleContainerInput(me.containerMenu.containerId,sword,8,ContainerInput.SWAP,me);
+            mobWeaponChanged=ticks;
+            return;
+        }
         if (sword>=0 && me.getInventory().getSelectedSlot()!=sword) {
             me.getInventory().setSelectedSlot(sword);
             mobWeaponChanged=ticks;
@@ -788,7 +799,7 @@ public final class LockOnSurvival {
         for(double offset:new double[]{0,0.6,-0.6,1.2,-1.2,1.57,-1.57}) {
             double dx=Math.cos(angle+offset), dz=Math.sin(angle+offset);
             if(Navigator.safeForward(mc.level,mc.player,dx,dz)) {
-                face(mc,mc.player.getEyePosition().add(dx,0,dz));
+                face(mc.player,mc.player.getEyePosition().add(dx,0,dz));
                 moveForward(mc,mc.player.getFoodData().getFoodLevel()>6);
                 reason="Fleeing danger: "+danger.getName().getString();
                 return;

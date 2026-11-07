@@ -39,6 +39,14 @@ public final class SurvivalPolicyTest {
         expect(SurvivalPolicy.canCompact("minecraft:iron_ingot",9));
         expect(!SurvivalPolicy.canCompact("minecraft:iron_ingot",8));
         expect(!SurvivalPolicy.canCompact("minecraft:dirt",64));
+        expect(SurvivalPolicy.shouldFlee(20,true,1,true));
+        expect(SurvivalPolicy.shouldFlee(10,false,1,true));
+        expect(SurvivalPolicy.shouldFlee(20,false,3,true));
+        expect(SurvivalPolicy.shouldFlee(20,false,1,false));
+        expect(!SurvivalPolicy.shouldFlee(20,false,1,true));
+        expect(SurvivalPolicy.shouldSmelt("minecraft:potato"));
+        expect(SurvivalPolicy.shouldSmelt("minecraft:beef"));
+        expect(!SurvivalPolicy.shouldSmelt("minecraft:poisonous_potato"));
         System.out.println("Survival policy: " + passed + " tests passed");
     }
 }

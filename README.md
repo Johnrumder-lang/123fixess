@@ -18,4 +18,3 @@ This release adds the following behavior.
 Start on supported surface terrain near natural trees and an existing crop or berry patch. The bot harvests existing food sources. It does not create a new farm, breed animals, or explore indefinitely to find unavailable resources. Storage capacity, blocked routes, server protections, unloaded terrain and missing supplies can still prevent progress. Escape requires a traversable route and cannot guarantee survival. Live gameplay has not been verified for this release.
 
 The GitHub workflow compiles the Minecraft mod and runs deterministic policy and source checks. These checks do not simulate a Minecraft world.
-
