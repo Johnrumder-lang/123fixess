@@ -70,7 +70,7 @@ assert '"key.keyboard.p".equals(survivalKey.saveString())' in client
 assert '"key.keyboard.o".equals(settingsKey.saveString())' in client
 assert 'KeyMapping.resetMapping();' in client
 assert 'mc.options.save();' in client
-assert '"F7 ACTIVE #" in survival
+assert '"F7 ACTIVE #"' in survival
 assert 'player.sendSystemMessage(line)' in survival
 assert 'mc.player.sendSystemMessage(Component.literal("[LockOn] " + status))' in client
 print("F7/F6 default key collision and saved-key migration checks: pass")
