@@ -36,8 +36,8 @@ final class LockOnBootstrap {
     private enum Step { WOOD, PLANKS, TABLE, STICKS, PICKAXE, READY, WAIT }
     private record Ingredient(Item item, int slot) {}
     private static Step step = Step.WOOD;
-    private static BlockPos base, table, treeBlock, digTarget, pickupTarget;
-    private static int pickupUntil;
+    private static BlockPos base, table, treeBlock, digTarget;
+    private static java.util.Map<Item,Integer> woodInventoryBefore=java.util.Map.of();
     private static ClientLevel world;
     private static Direction facing;
     private static int ticks, lastClick, lastDigTick, lastMoveTick, noProgress;
@@ -90,8 +90,7 @@ final class LockOnBootstrap {
         table=findWorkbenchSite(mc);
         scoutTarget=null;
         scoutIndex=0;
-        treeBlock=digTarget=pickupTarget=null;
-        pickupUntil=0;
+        treeBlock=digTarget=null;
         aimedWood=null;
         digFace=Direction.UP;
         woodAimTick=0;
@@ -136,7 +135,6 @@ final class LockOnBootstrap {
         lastLookTarget=null;
         digTarget=null;
         aimedWood=null;
-        pickupTarget=null;
         release(mc);
     }
 
@@ -180,11 +178,11 @@ final class LockOnBootstrap {
         }
         if(digTarget!=null) {
             if(mc.level.getBlockState(digTarget).isAir()){
-                pickupTarget=digTarget;
-                pickupUntil=ticks+35;
+                LockOnSurvival.waitForDrop(digTarget,woodInventoryBefore);
                 digTarget=null;
                 logsMined++;
                 detail="Log broken: walking over to collect drops";
+                return false;
             } else if(ticks-lastDigTick>180){
                 mc.gameMode.stopDestroyBlock();
                 digTarget=null;
@@ -195,28 +193,6 @@ final class LockOnBootstrap {
             }else{
                 mc.gameMode.continueDestroyBlock(digTarget,digFace);
                 return false;
-            }
-        }
-
-        // Minecraft log drops land on the ground, not directly in the
-        // player's inventory. Walk into the felled log location to actually
-        // pick them up before trying to craft with nonexistent resources.
-        if (pickupTarget != null) {
-            if (ticks >= pickupUntil) {
-                pickupTarget = null;
-            } else {
-                double dx=pickupTarget.getX()+0.5-player.getX();
-                double dz=pickupTarget.getZ()+0.5-player.getZ();
-                double d=Math.hypot(dx,dz);
-                if(d > 0.85 && d < 4.0 && Navigator.safeForward(mc.level,player,dx,dz)) {
-                    rotate(player,new Vec3(pickupTarget.getX()+0.5,
-                        player.getEyeY(),pickupTarget.getZ()+0.5));
-                    moveForward(mc);
-                    detail="Collecting broken log on ground";
-                    return false;
-                }
-                release(mc);
-                pickupTarget=null;
             }
         }
 
@@ -360,6 +336,7 @@ final class LockOnBootstrap {
         digTarget=treeBlock;
         digFace=hit.getDirection();
         lastDigTick=ticks;
+        woodInventoryBefore=LockOnSurvival.inventoryCounts(player);
         mc.gameMode.startDestroyBlock(treeBlock,digFace);
         detail="Punching nearby tree "+treeBlock.toShortString();
     }

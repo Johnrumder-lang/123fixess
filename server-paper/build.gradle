@@ -2,7 +2,7 @@ plugins {
     id 'java'
 }
 group = 'lockon.paper'
-version = '3.5.2'
+version = '3.5.4'
 base { archivesName = 'lockon-paper' }
 repositories {
     mavenCentral()

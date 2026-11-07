@@ -17,6 +17,8 @@ import net.minecraft.world.inventory.ContainerInput;
 import net.minecraft.world.inventory.InventoryMenu;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.item.ItemEntity;
+import net.minecraft.world.item.Item;
 import net.minecraft.world.entity.monster.Monster;
 import net.minecraft.world.entity.monster.Creeper;
 import net.minecraft.world.item.ItemStack;
@@ -51,6 +53,15 @@ public final class LockOnSurvival {
     private static int mobWeaponChanged = -1000;
     private static BlockPos miningBlock;
     private static BlockPos aimedBlock;
+    private static BlockPos pickupBlock;
+    private static int pickupSince;
+    private static boolean sawDrop;
+    private static java.util.Map<Item,Integer> inventoryBeforeDig=java.util.Map.of();
+    private static boolean seekingStone;
+    private static BlockPos towerBlock;
+    private static int towerStarted, towerLastUse=-100;
+    private static boolean escapeRequested;
+    private static int escapeAttempts, lastEscapeStep=-1;
     private static int aimedSince;
     private static int lastDistanceTick;
     private static int lastToolSwapTick=-1000;
@@ -116,6 +127,12 @@ public final class LockOnSurvival {
         startTick = 0;
         miningBlock = null;
         aimedBlock = null;
+        pickupBlock=null;
+        seekingStone=false;
+        towerBlock=null;
+        escapeRequested=false;
+        escapeAttempts=0;
+        lastEscapeStep=-1;
         lastDistanceTick = 0;
         lastDistance = -1;
         lastWaypoint = null;
@@ -133,6 +150,9 @@ public final class LockOnSurvival {
         LockOnBase.stop(mc);
         LockOnBootstrap.stop(mc);
         phase = Phase.OFF;
+        pickupBlock=null;
+        towerBlock=null;
+        escapeRequested=false;
         eating = false;
         foodSlot = -1;
         if (mc.player != null && message != null && !message.isBlank()) notice(mc.player,message);
@@ -209,8 +229,16 @@ public final class LockOnSurvival {
             reason="Returning to interrupted work after danger";
             return;
         }
+        if(pickupBlock!=null && collectMinedDrop(mc)) return;
         if(LockOnMovement.stuck()) {
-            stop(mc,"Movement made no progress for 70 ticks. Autoplay stopped; manual controls available.");
+            if((phase==Phase.TUNNEL || phase==Phase.RETURN) && escapeAttempts<3) {
+                cancelDig(mc);
+                release(mc);
+                phase=Phase.RETURN;
+                escapeRequested=true;
+                escapeAttempts++;
+                reason="Trench blocked: trying to clear an exit or place a climbing block";
+            } else stop(mc,"No safe exit after three recovery attempts. F7 stops/restarts autoplay.");
             return;
         }
         if(LockOnTravel.openGate(mc)) {release(mc);return;}
@@ -295,7 +323,8 @@ public final class LockOnSurvival {
                 steps = 0;
                 startTick = ticks;
                 phase = Phase.TUNNEL;
-                reason = "Tools crafted: strip mining";
+                seekingStone=!hasBetterPickaxe(me);
+                reason = seekingStone?"Descending to gather cobblestone for a stone pickaxe":"Tools ready: strip mining";
                 notice(me,"Wood and tools ready. Starting first mining tunnel.");
             }
             return;
@@ -315,6 +344,13 @@ public final class LockOnSurvival {
         }
 
         if (phase == Phase.TUNNEL) {
+            if(seekingStone && countItem(me,Items.COBBLESTONE)>=3) {
+                cancelDig(mc);
+                release(mc);
+                phase=Phase.RETURN;
+                reason="Three cobblestone collected: returning to craft a stone pickaxe";
+                return;
+            }
             if (!hasWorkingPickaxe(me)) {
                 cancelDig(mc);
                 release(mc);
@@ -344,6 +380,7 @@ public final class LockOnSurvival {
         if (miningBlock != null) {
             if (mc.level.getBlockState(miningBlock).isAir()) {
                 finishDig(mc);
+                return;
             } else {
                 dig(mc, me, miningBlock);
                 return;
@@ -373,7 +410,10 @@ public final class LockOnSurvival {
             pause(mc, "Lava/fire/void detected near next tunnel block"); return;
         }
 
-        for (BlockPos pos : new BlockPos[] {next, next.above()}) {
+        int clearance=MiningPlan.clearance(tunnelPoint(steps).getY(),next.getY());
+        // Clear from top to bottom, including jump headroom BEFORE descending.
+        for (int height=clearance-1;height>=0;height--) {
+            BlockPos pos=next.above(height);
             if (!Navigator.passable(mc.level, pos)) {
                 if (!canMine(mc, me, pos)) {
                     if (lastToolSwapTick == ticks) {
@@ -393,7 +433,7 @@ public final class LockOnSurvival {
         double dx = next.getX() + 0.5 - me.getX();
         double dz = next.getZ() + 0.5 - me.getZ();
         double horizontal = Math.hypot(dx, dz);
-        if (horizontal <= 0.52 && Math.abs(me.getY() - next.getY()) < 0.75) {
+        if (me.onGround() && horizontal <= 0.52 && Math.abs(me.getY() - next.getY()) < 0.75) {
             steps++;
             lastWaypoint=null;
             release(mc);
@@ -413,20 +453,24 @@ public final class LockOnSurvival {
             pause(mc, "Movement stuck: no progress toward "+next.toShortString());
             return;
         }
-        // At each fourth block descend exactly one block on a supported
-        // staircase. Horizontal-only safeForward() would falsely report
-        // a gap at this intentional, bounded one-block drop.
-        boolean descending = next.getY() < me.getY() - 0.35;
-        if (descending && (me.getY() - next.getY() > 1.45
-            || mc.level.getBlockState(next.below()).getCollisionShape(
-                mc.level,next.below()).isEmpty())) {
-            pause(mc,"Unsafe downhill step");return;
+        double heightDifference=next.getY()-me.getY();
+        if(me.onGround() && Math.abs(heightDifference)>1.45) {
+            pause(mc,"Unsafe vertical step on mining route");
+            return;
         }
-        if (!descending && !Navigator.safeForward(mc.level, me, dx, dz)) {
-            pause(mc, "Unsafe movement ahead"); return;
+        boolean climbing=heightDifference>0.35;
+        if(me.onGround() && climbing && !clearClimb(mc,me,next)) return;
+        // Airborne players are already executing a checked stair jump/drop.
+        // Requiring a walkable block at their mid-jump feet rejects the step.
+        if(me.onGround() && !climbing && heightDifference>=-0.35
+            && !Navigator.safeForward(mc.level,me,dx,dz)) {
+            LockOnTravel.walk(mc,next);
+            reason="Rejoining mining route around a trench obstruction";
+            return;
         }
         face(me, Vec3.atCenterOf(next).add(0,0.4,0));
         moveForward(mc, false);
+        LockOnMovement.jump(mc,me.onGround() && climbing);
     }
 
     private static boolean canMine(Minecraft mc, LocalPlayer me, BlockPos pos) {
@@ -495,11 +539,13 @@ public final class LockOnSurvival {
         double bestSq = 4.1 * 4.1;
         for(int dx=-3;dx<=3;dx++)for(int dy=-2;dy<=2;dy++)for(int dz=-3;dz<=3;dz++){
             BlockPos p = at.offset(dx,dy,dz);
-            if (p.equals(at.below()) || (base!=null && p.distSqr(base) < 3.0)) continue;
+            if (p.equals(at.below()) || isRouteSupport(p)
+                || (base!=null && p.distSqr(base) < 3.0)) continue;
             if (!mc.level.hasChunk(p.getX()>>4,p.getZ()>>4))continue;
             BlockState s = mc.level.getBlockState(p);
             String id=BuiltInRegistries.BLOCK.getKey(s.getBlock()).toString();
-            if(!ids.contains(id)) continue;
+            boolean stone=seekingStone && (s.is(Blocks.STONE)||s.is(Blocks.COBBLESTONE));
+            if(seekingStone ? !stone : !ids.contains(id)) continue;
             double d2=me.getEyePosition().distanceToSqr(Vec3.atCenterOf(p));
             if(d2>=bestSq)continue;
             BlockHitResult hit=mc.level.clip(new ClipContext(me.getEyePosition(),
@@ -517,7 +563,7 @@ public final class LockOnSurvival {
             aimedBlock = null;
             return;
         }
-        if (!hasWorkingPickaxe(me)) {
+        if (!hasWorkingPickaxe(me) && phase!=Phase.RETURN) {
             cancelDig(mc);
             reason = "Pickaxe missing: cannot mine";
             return;
@@ -552,6 +598,7 @@ public final class LockOnSurvival {
         }
         if (miningBlock == null) {
             miningBlock = p;
+            inventoryBeforeDig=inventoryCounts(me);
             miningStarted = ticks;
             miningFace = actual.getDirection();
             mc.gameMode.startDestroyBlock(p,miningFace);
@@ -578,6 +625,8 @@ public final class LockOnSurvival {
     }
 
     private static void finishDig(Minecraft mc) {
+        waitForDrop(miningBlock,inventoryBeforeDig);
+        release(mc);
         miningBlock = null;
         aimedBlock = null;
         blocksMined++;
@@ -731,21 +780,35 @@ public final class LockOnSurvival {
         mc.options.keyUse.setDown(false);
     }
 
-    // A shallow staircase from the original surface home into stone.
-    // Revisit every waypoint in reverse on return; no teleportation.
+    // Fixed geometry throughout a run, so the return follows the mined staircase.
     private static BlockPos tunnelPoint(int index) {
-        int interval = 4;
-        int depth = Math.min(24, Math.max(0,index) / interval);
+        int availableDepth=Math.max(0,base.getY()-world.getMinY()-5);
+        int depth=Math.min(availableDepth,MiningPlan.depth(index));
         return base.relative(tunnelDirection,Math.max(0,index)).below(depth);
     }
 
     private static void returnToBase(Minecraft mc,LocalPlayer me) {
         if (base == null) { pause(mc,"No base recorded");return; }
-        BlockPos destination = steps > 0 ? tunnelPoint(steps-1) : base;
+        if(lastEscapeStep!=steps) {
+            lastEscapeStep=steps;
+            escapeAttempts=0;
+        }
+        // Rejoin the current waypoint before decrementing. Drops can pull the
+        // player into the next column before it becomes a completed waypoint.
+        BlockPos destination = steps > 0 ? tunnelPoint(steps) : base;
+        if(miningBlock!=null || aimedBlock!=null) {
+            dig(mc,me,miningBlock!=null?miningBlock:aimedBlock);
+            return;
+        }
+        if(towerBlock!=null || escapeRequested || (me.onGround() && destination.getY()-me.getY()>1.45)) {
+            towerOut(mc,me);
+            return;
+        }
         double dx=destination.getX()+0.5-me.getX();
         double dz=destination.getZ()+0.5-me.getZ();
         double d=Math.hypot(dx,dz);
-        if (d < 0.65 && Math.abs(me.getY()-destination.getY()) < 0.85) {
+        if (me.onGround() && d < 0.65 && me.getY()>=destination.getY()-0.15
+            && me.getY()<=destination.getY()+1.4) {
             if (steps > 0) {
                 steps--;
                 release(mc);
@@ -763,26 +826,208 @@ public final class LockOnSurvival {
             return;
         }
         boolean uphill=destination.getY()>me.getY()+0.35;
-        if (uphill) {
-            if (destination.getY()-me.getY()>1.45
-                || !Navigator.safeToJump(mc.level,me)) {
-                pause(mc,"Unsafe upward return step");return;
+        if(me.onGround() && uphill) {
+            if(destination.getY()-me.getY()>1.45) {
+                escapeRequested=true;
+                towerOut(mc,me);
+                return;
             }
-        } else if(!Navigator.safeForward(mc.level,me,dx,dz)) {
-            pause(mc,"Return route blocked or unsupported");return;
+            if(!clearClimb(mc,me,destination)) return;
+        } else if(me.onGround() && !Navigator.safeForward(mc.level,me,dx,dz)) {
+            LockOnTravel.walk(mc,destination);
+            reason="Routing around return-path obstruction";
+            return;
         }
         face(me,new Vec3(destination.getX()+0.5,me.getEyeY(),
             destination.getZ()+0.5));
         moveForward(mc,false);
-        LockOnMovement.jump(mc,uphill);
+        LockOnMovement.jump(mc,me.onGround() && uphill);
+    }
+
+    private static void towerOut(Minecraft mc,LocalPlayer me) {
+        if(towerBlock==null) {
+            if(!me.onGround()) {release(mc);return;}
+            BlockPos feet=BlockPos.containing(me.getX(),me.getY()+0.08,me.getZ());
+            if(hazardAround(mc.level,feet)
+                || !mc.level.getBlockState(feet.below()).isFaceSturdy(mc.level,feet.below(),Direction.UP)) {
+                stop(mc,"Cannot tower here: unsafe or missing support below");
+                return;
+            }
+            // Clear the space needed for both the jump and the raised player.
+            for(BlockPos ceiling:new BlockPos[]{feet.above(2),feet.above(3)}) {
+                if(Navigator.passable(mc.level,ceiling)) continue;
+                if(canMine(mc,me,ceiling)) {
+                    dig(mc,me,ceiling);
+                    reason="Digging overhead space before towering out";
+                    return;
+                }
+                if(lastToolSwapTick==ticks) return;
+                stop(mc,"Cannot tower: ceiling cannot be safely mined with available tools");
+                return;
+            }
+            towerBlock=feet;
+            towerStarted=ticks;
+            towerLastUse=-100;
+        }
+        if(ticks-towerStarted>100) {
+            stop(mc,"Tower placement not confirmed; check available blocks or server protection");
+            return;
+        }
+        if(!mc.level.getBlockState(towerBlock).isAir()) {
+            release(mc);
+            if(me.onGround() && me.getY()>=towerBlock.getY()+0.9) {
+                towerBlock=null;
+                escapeRequested=false;
+                reason="Climbing block confirmed: resuming route home";
+            }
+            return;
+        }
+        int material=-1;
+        for(int i=0;i<36;i++) {
+            ItemStack stack=me.getInventory().getItem(i);
+            if(stack.is(Items.DIRT)||stack.is(Items.COBBLESTONE)) {material=i;break;}
+        }
+        if(material<0) {
+            stop(mc,"Cannot tower out: no dirt or cobblestone in inventory");
+            return;
+        }
+        if(!(me.containerMenu instanceof InventoryMenu)) {release(mc);return;}
+        if(material>=9) {
+            mc.gameMode.handleContainerInput(me.containerMenu.containerId,material,8,ContainerInput.SWAP,me);
+            release(mc);
+            return;
+        }
+        double dx=towerBlock.getX()+0.5-me.getX(),dz=towerBlock.getZ()+0.5-me.getZ();
+        if(me.onGround() && Math.hypot(dx,dz)>0.18) {
+            face(me,new Vec3(towerBlock.getX()+0.5,me.getEyeY(),towerBlock.getZ()+0.5));
+            moveForward(mc,false);
+            reason="Centering on supported block to tower out";
+            return;
+        }
+        release(mc);
+        me.getInventory().setSelectedSlot(material);
+        Vec3 hit=new Vec3(towerBlock.getX()+0.5,towerBlock.getY(),towerBlock.getZ()+0.5);
+        face(me,hit);
+        LockOnMovement.jump(mc,true);
+        if(!MiningPlan.canPlaceTower(me.getY(),towerBlock.getY(),ticks-towerLastUse)) {
+            reason="Jumping to place a climbing block underneath";
+            return;
+        }
+        BlockPos support=towerBlock.below();
+        BlockHitResult ray=mc.level.clip(new ClipContext(me.getEyePosition(),hit.add(0,-0.01,0),
+            ClipContext.Block.COLLIDER,ClipContext.Fluid.NONE,me));
+        if(ray.getType()!=HitResult.Type.BLOCK || !ray.getBlockPos().equals(support)) {
+            reason="Waiting for clear view of tower support";
+            return;
+        }
+        mc.gameMode.useItemOn(me,InteractionHand.MAIN_HAND,ray);
+        towerLastUse=ticks;
+        reason="Placing dirt/cobblestone under jump; waiting for confirmation";
+    }
+
+    private static boolean clearClimb(Minecraft mc,LocalPlayer me,BlockPos destination) {
+        for(BlockPos ceiling:new BlockPos[]{me.blockPosition().above(2),destination.above()}) {
+            if(Navigator.passable(mc.level,ceiling)) continue;
+            if(canMine(mc,me,ceiling)) {
+                dig(mc,me,ceiling);
+                reason="Clearing jump headroom out of trench";
+                return false;
+            }
+            if(lastToolSwapTick==ticks) return false;
+            pause(mc,"Trench ceiling cannot be mined safely");
+            return false;
+        }
+        if(!Navigator.safeToJump(mc.level,me)) {
+            pause(mc,"No safe support for trench exit jump");
+            return false;
+        }
+        return true;
     }
 
     private static int cycleLength() {
-        return LockOnSettings.stripLength() + (cycles/4)*16;
+        int length=LockOnSettings.stripLength() + (cycles/4)*16;
+        return seekingStone?Math.max(64,length):length;
+    }
+
+    private static int countItem(LocalPlayer player,Item item) {
+        return inventoryCounts(player).getOrDefault(item,0);
+    }
+
+    static java.util.Map<Item,Integer> inventoryCounts(LocalPlayer player) {
+        java.util.Map<Item,Integer> counts=new java.util.HashMap<>();
+        for(int i=0;i<36;i++) {
+            ItemStack stack=player.getInventory().getItem(i);
+            if(!stack.isEmpty()) counts.merge(stack.getItem(),stack.getCount(),Integer::sum);
+        }
+        return counts;
+    }
+
+    private static boolean hasBetterPickaxe(LocalPlayer player) {
+        for(int i=0;i<36;i++) {
+            ItemStack stack=player.getInventory().getItem(i);
+            if(stack.is(ItemTags.PICKAXES) && !stack.is(Items.WOODEN_PICKAXE)
+                && !stack.is(Items.GOLDEN_PICKAXE)
+                && (!stack.isDamageableItem() || stack.getMaxDamage()-stack.getDamageValue()>16)) return true;
+        }
+        return false;
+    }
+
+    private static boolean isRouteSupport(BlockPos candidate) {
+        for(int i=0;i<=steps+1;i++) if(candidate.equals(tunnelPoint(i).below())) return true;
+        return false;
+    }
+
+    static void waitForDrop(BlockPos broken,java.util.Map<Item,Integer> before) {
+        pickupBlock=broken;
+        inventoryBeforeDig=before;
+        pickupSince=ticks;
+        sawDrop=false;
+    }
+
+    private static boolean collectMinedDrop(Minecraft mc) {
+        LocalPlayer me=mc.player;
+        ItemEntity nearest=null;
+        double best=Double.MAX_VALUE;
+        for(Entity entity:mc.level.entitiesForRendering()) {
+            if(!(entity instanceof ItemEntity item) || !item.isAlive()
+                || item.position().distanceToSqr(Vec3.atCenterOf(pickupBlock))>9) continue;
+            double distance=item.distanceToSqr(me);
+            if(distance<best) {best=distance;nearest=item;}
+        }
+        if(nearest!=null) sawDrop=true;
+        boolean gained=false;
+        for(var entry:inventoryCounts(me).entrySet()) {
+            if(entry.getValue()>inventoryBeforeDig.getOrDefault(entry.getKey(),0)) gained=true;
+        }
+        MiningPlan.Pickup action=MiningPlan.pickup(ticks-pickupSince,sawDrop,nearest!=null,gained);
+        switch(action) {
+            case WAIT -> {
+                release(mc);
+                reason="Waiting for block drop / inventory pickup confirmation";
+                return true;
+            }
+            case COLLECT -> {
+                BlockPos target=nearest.blockPosition();
+                LockOnTravel.walk(mc,target);
+                reason="Collecting mined drop before continuing";
+                return true;
+            }
+            case BLOCKED -> {
+                stop(mc,"Mined drop could not be collected safely; autoplay stopped");
+                return true;
+            }
+            case DONE -> reason="Drop collected; inventory increase confirmed";
+            case NO_DROP -> reason="No dropped item appeared after waiting";
+        }
+        pickupBlock=null;
+        release(mc);
+        return true;
     }
 
     private static void interruptWork(Minecraft mc) {
         cancelDig(mc);
+        towerBlock=null;
+        escapeRequested=false;
         stopEating(mc);
         if(phase==Phase.BOOTSTRAP) LockOnBootstrap.reset(mc,base,baseFacing);
         if(phase==Phase.BASE) {LockOnBase.stop(mc);LockOnBase.reset();}

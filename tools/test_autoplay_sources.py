@@ -43,7 +43,7 @@ assert "case UPGRADE_IRON" in base
 assert "Items.IRON_INGOT" in base
 assert "Items.STICK,new int[]{5,8}" in base
 assert "FURNACE" in base and "SMELT" in base
-assert "pickupTarget" in bootstrap
+assert "LockOnSurvival.waitForDrop(digTarget,woodInventoryBefore)" in bootstrap
 assert "Log broken: walking over to collect drops" in bootstrap
 # v3.2: crafting table must be faced and clicks must be validated.
 assert "lookForInteraction(player,table.below(),hit)" in bootstrap
@@ -103,3 +103,13 @@ print("Survival wood-to-tools progression, repeat and no-special-commands: pass"
 assert "supportPoint" in bootstrap
 assert "approachWorkbench(mc,table.below(),supportPoint)" in bootstrap
 assert "LockOnBootstrap.workbenchPosition()" in base
+
+# Staircase clearance and drop collection must be wired into normal entry points.
+assert "MiningPlan.clearance(tunnelPoint(steps).getY(),next.getY())" in survival
+assert "steps > 0 ? tunnelPoint(steps) : base" in survival
+assert "if(pickupBlock!=null && collectMinedDrop(mc)) return;" in survival
+assert "seekingStone && countItem(me,Items.COBBLESTONE)>=3" in survival
+assert "me.onGround() && uphill" in survival
+
+assert "MiningPlan.canPlaceTower(" in survival
+assert "towerOut(mc,me)" in survival
