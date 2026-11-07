@@ -33,7 +33,7 @@ import net.minecraft.core.registries.BuiltInRegistries;
  * may be manipulated. One inventory input per game tick at most.
  */
 final class LockOnBase {
-    private enum Stage { TABLE, CHEST, UPGRADE_TOOL, FURNACE, SMELT, COMPACT, STORE, DONE }
+    private enum Stage { TABLE, CHEST, UPGRADE_TOOL, FURNACE, SMELT, UPGRADE_IRON, COMPACT, STORE, DONE }
     private static Stage stage = Stage.TABLE;
     private static BlockPos table, chest, furnace;
     private static int ticks, stageTicks, lastInput;
@@ -226,6 +226,30 @@ final class LockOnBase {
                     close(mc);
                     advance(mc);
                 }
+            }
+            case UPGRADE_IRON -> {
+                if (hasTool(mc.player,Items.IRON_PICKAXE)
+                    || hasTool(mc.player,Items.DIAMOND_PICKAXE)
+                    || hasTool(mc.player,Items.NETHERITE_PICKAXE)) {
+                    advance(mc);return false;
+                }
+                if(countInventory(mc.player,Items.IRON_INGOT)<3
+                    || !isBlock(mc,table,Blocks.CRAFTING_TABLE)) {
+                    status="Iron upgrade requires 3 smelted iron ingots";
+                    advance(mc);return false;
+                }
+                if(!open(mc,table,CraftingMenu.class))return false;
+                if(countInventory(mc.player,Items.STICK)<2) {
+                    Item plank=findPlank(mc.player,2);
+                    if(plank!=null) {
+                        if(craft(mc,plank,new int[]{1,4},false))close(mc);
+                        return false;
+                    }
+                    status="Iron upgrade waiting for wood planks to make sticks";
+                    advance(mc);return false;
+                }
+                if(craft(mc,Items.IRON_INGOT,new int[]{1,2,3},
+                    Items.STICK,new int[]{5,8},false))close(mc);
             }
             case COMPACT -> {
                 if (!LockOnSettings.survivalCompact()

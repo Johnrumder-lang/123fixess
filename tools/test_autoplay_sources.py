@@ -27,4 +27,23 @@ assert "sendCommand(" not in bootstrap
 assert "sendCommand(" not in survival
 assert "sendCommand(" not in base
 assert "phase = Phase.TUNNEL;" in survival
+# Regressions from v3.0: mining without looking down, entering tunnel
+# without any pickaxe, misclassifying a tool hotbar swap as failed mining.
+assert "face(me,Vec3.atCenterOf(p));" in survival
+assert "aimedSince" in survival
+assert "mc.level.clip(new ClipContext(" in survival
+assert survival.index("face(me,Vec3.atCenterOf(p));") < survival.index(
+    "mc.gameMode.startDestroyBlock(p,miningFace);")
+assert "if (!hasWorkingPickaxe(me))" in survival
+assert "No usable pickaxe; " in survival
+assert "lastToolSwapTick == ticks" in survival
+assert "minecraft:iron_ore" in survival
+assert "minecraft:coal_ore" in survival
+assert "case UPGRADE_IRON" in base
+assert "Items.IRON_INGOT" in base
+assert "Items.STICK,new int[]{5,8}" in base
+assert "FURNACE" in base and "SMELT" in base
+assert "pickupTarget" in bootstrap
+assert "Log broken: walking over to collect drops" in bootstrap
+print("Mining look-down, tool gate, tool swap and iron/furnace regression checks: pass")
 print("Survival wood-to-tools progression, repeat and no-special-commands: pass")

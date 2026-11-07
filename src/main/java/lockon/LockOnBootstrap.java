@@ -22,6 +22,8 @@ import net.minecraft.world.item.Items;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.BlockHitResult;
+import net.minecraft.world.level.ClipContext;
+import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
 
 /**
@@ -34,7 +36,8 @@ final class LockOnBootstrap {
     private enum Step { WOOD, PLANKS, TABLE, STICKS, PICKAXE, READY, WAIT }
     private record Ingredient(Item item, int slot) {}
     private static Step step = Step.WOOD;
-    private static BlockPos base, table, treeBlock, digTarget;
+    private static BlockPos base, table, treeBlock, digTarget, pickupTarget;
+    private static int pickupUntil;
     private static ClientLevel world;
     private static Direction facing;
     private static int ticks, lastClick, lastDigTick, lastMoveTick, noProgress;
@@ -66,7 +69,8 @@ final class LockOnBootstrap {
         // Keep all station blocks off the four cardinal mining corridors.
         table=base.relative(direction.getOpposite(),2)
             .relative(direction.getClockWise(),2);
-        treeBlock=digTarget=null;
+        treeBlock=digTarget=pickupTarget=null;
+        pickupUntil=0;
         ticks=0;
         lastClick=-20;
         lastDigTick=0;
@@ -95,6 +99,7 @@ final class LockOnBootstrap {
         openedTable=false;
         recipe=null;
         digTarget=null;
+        pickupTarget=null;
         release(mc);
     }
 
@@ -130,9 +135,11 @@ final class LockOnBootstrap {
         }
         if(digTarget!=null) {
             if(mc.level.getBlockState(digTarget).isAir()){
+                pickupTarget=digTarget;
+                pickupUntil=ticks+35;
                 digTarget=null;
                 logsMined++;
-                detail="Wood collected "+logsMined+" logs";
+                detail="Log broken: walking over to collect drops";
             } else if(ticks-lastDigTick>180){
                 mc.gameMode.stopDestroyBlock();
                 digTarget=null;
@@ -143,6 +150,28 @@ final class LockOnBootstrap {
             }else{
                 mc.gameMode.continueDestroyBlock(digTarget,Direction.UP);
                 return false;
+            }
+        }
+
+        // Minecraft log drops land on the ground, not directly in the
+        // player's inventory. Walk into the felled log location to actually
+        // pick them up before trying to craft with nonexistent resources.
+        if (pickupTarget != null) {
+            if (ticks >= pickupUntil) {
+                pickupTarget = null;
+            } else {
+                double dx=pickupTarget.getX()+0.5-player.getX();
+                double dz=pickupTarget.getZ()+0.5-player.getZ();
+                double d=Math.hypot(dx,dz);
+                if(d > 0.85 && d < 4.0 && Navigator.safeForward(mc.level,player,dx,dz)) {
+                    rotate(player,new Vec3(pickupTarget.getX()+0.5,
+                        player.getEyeY(),pickupTarget.getZ()+0.5));
+                    moveForward(mc);
+                    detail="Collecting broken log on ground";
+                    return false;
+                }
+                release(mc);
+                pickupTarget=null;
             }
         }
 
@@ -251,6 +280,18 @@ final class LockOnBootstrap {
         release(mc);
         if(mc.level.getBlockState(treeBlock).isAir()){treeBlock=null;return;}
         rotate(player,Vec3.atCenterOf(treeBlock));
+        // The nearest log can be behind leaves or another log. Vanilla
+        // players cannot punch THROUGH it. Retarget rather than endlessly
+        // sending break packets to an occluded block.
+        BlockHitResult hit=mc.level.clip(new ClipContext(
+            player.getEyePosition(),Vec3.atCenterOf(treeBlock),
+            ClipContext.Block.COLLIDER,ClipContext.Fluid.NONE,player));
+        if(hit.getType()!=HitResult.Type.BLOCK
+            || !hit.getBlockPos().equals(treeBlock)){
+            detail="Tree log obscured; selecting a visible trunk block";
+            treeBlock=null;
+            return;
+        }
         digTarget=treeBlock;
         lastDigTick=ticks;
         mc.gameMode.startDestroyBlock(treeBlock,Direction.UP);
@@ -269,7 +310,17 @@ final class LockOnBootstrap {
                     BlockPos p=new BlockPos(bx,playerPos.getY()+y,bz);
                     if(!mc.level.getBlockState(p).is(BlockTags.LOGS)
                         || !naturalTree(mc.level,p))continue;
-                    double d=player.getEyePosition().distanceToSqr(Vec3.atCenterOf(p));
+                    double physical=player.getEyePosition().distanceToSqr(Vec3.atCenterOf(p));
+                    if(physical < 4.2*4.2) {
+                        BlockHitResult hit=mc.level.clip(new ClipContext(
+                            player.getEyePosition(),Vec3.atCenterOf(p),
+                            ClipContext.Block.COLLIDER,ClipContext.Fluid.NONE,player));
+                        if(hit.getType()!=HitResult.Type.BLOCK
+                            || !hit.getBlockPos().equals(p))continue;
+                    }
+                    // Prefer lower trunk pieces so mining starts at the
+                    // base and the dropped log falls close to the player.
+                    double d=physical+2.0*Math.max(0,p.getY()-playerPos.getY());
                     if(d<best){best=d;closest=p;}
                 }
             }
@@ -280,7 +331,7 @@ final class LockOnBootstrap {
     private static boolean naturalTree(ClientLevel world,BlockPos p) {
         // Avoid stripping logs from an unrelated wooden house.
         for(int dx=-2;dx<=2;dx++)for(int dz=-2;dz<=2;dz++)
-            for(int dy=0;dy<=4;dy++){
+            for(int dy=0;dy<=6;dy++){
                 if(world.getBlockState(p.offset(dx,dy,dz)).is(BlockTags.LEAVES))
                     return true;
             }
@@ -357,8 +408,12 @@ final class LockOnBootstrap {
     }
 
     private static boolean hasPickaxe(LocalPlayer p){
-        for(int i=0;i<36;i++)if(p.getInventory().getItem(i).is(ItemTags.PICKAXES))
-            return true;
+        for(int i=0;i<36;i++){
+            ItemStack tool=p.getInventory().getItem(i);
+            if(tool.is(ItemTags.PICKAXES)
+                && (!tool.isDamageableItem()
+                    || tool.getMaxDamage()-tool.getDamageValue()>3)) return true;
+        }
         return false;
     }
 

@@ -2,6 +2,7 @@ package lockon;
 
 import java.util.Comparator;
 import java.util.Set;
+import java.util.HashSet;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.client.multiplayer.ClientLevel;
@@ -46,6 +47,12 @@ public final class LockOnSurvival {
     private static int startTick;
     private static int lastMobHit = -1000;
     private static BlockPos miningBlock;
+    private static BlockPos aimedBlock;
+    private static int aimedSince;
+    private static int lastDistanceTick;
+    private static int lastToolSwapTick=-1000;
+    private static double lastDistance;
+    private static BlockPos lastWaypoint;
     private static Direction miningFace = Direction.UP;
     private static int miningStarted;
     private static int blocksMined;
@@ -55,6 +62,15 @@ public final class LockOnSurvival {
     private static int foodSlot = -1;
     private static String reason = "";
     private static final int MAX_MINING_TICKS = 240;
+    private static final Set<String> SURVIVAL_ORES = Set.of(
+        "minecraft:coal_ore", "minecraft:deepslate_coal_ore",
+        "minecraft:iron_ore", "minecraft:deepslate_iron_ore",
+        "minecraft:copper_ore", "minecraft:deepslate_copper_ore",
+        "minecraft:gold_ore", "minecraft:deepslate_gold_ore",
+        "minecraft:diamond_ore", "minecraft:deepslate_diamond_ore",
+        "minecraft:emerald_ore", "minecraft:deepslate_emerald_ore",
+        "minecraft:lapis_ore", "minecraft:deepslate_lapis_ore",
+        "minecraft:redstone_ore", "minecraft:deepslate_redstone_ore");
 
     private LockOnSurvival() {}
 
@@ -90,6 +106,10 @@ public final class LockOnSurvival {
         ticks = 0;
         startTick = 0;
         miningBlock = null;
+        aimedBlock = null;
+        lastDistanceTick = 0;
+        lastDistance = -1;
+        lastWaypoint = null;
         phase = Phase.BOOTSTRAP;
         reason = "";
         LockOnBase.reset();
@@ -132,11 +152,16 @@ public final class LockOnSurvival {
                     tunnelDirection = tunnelDirection.getClockWise();
                     steps = 0;
                     startTick = ticks;
-                    reason = "Starting next mining run " + (cycles + 1);
-                    phase = Phase.TUNNEL;
-                    if (mc.player != null)
-                        notice(mc.player,"Base cycle complete. Mining again: " + tunnelDirection
-                            + " (cycle " + (cycles + 1) + ")");
+                    if (!hasWorkingPickaxe(me)) {
+                        phase = Phase.BOOTSTRAP;
+                        LockOnBootstrap.reset(mc, base, baseFacing);
+                        reason = "No pickaxe: returning to wood/sticks/tool crafting";
+                        notice(me, "No usable pickaxe. Crafting a new one BEFORE mining.");
+                    } else {
+                        reason = "Tool checked; starting mining cycle " + (cycles + 1);
+                        phase = Phase.TUNNEL;
+                        notice(me, "Base processed; starting next tunnel with pickaxe.");
+                    }
                 } else {
                     stop(mc,"Mining and base processing complete. "+status());
                 }
@@ -221,6 +246,16 @@ public final class LockOnSurvival {
         }
 
         if (phase == Phase.TUNNEL) {
+            if (!hasWorkingPickaxe(me)) {
+                cancelDig(mc);
+                release(mc);
+                phase = steps > 0 ? Phase.RETURN : Phase.BOOTSTRAP;
+                reason = "No usable pickaxe; " + (steps > 0
+                    ? "returning to base for tools" : "crafting tools before mining");
+                if (phase == Phase.BOOTSTRAP) LockOnBootstrap.reset(mc, base, baseFacing);
+                notice(me,reason);
+                return;
+            }
             mineTunnel(mc, me);
         }
     }
@@ -228,7 +263,14 @@ public final class LockOnSurvival {
     private static void mineTunnel(Minecraft mc, LocalPlayer me) {
         if (base == null) { pause(mc,"No home position"); return; }
         if (ticks - startTick < 3) return;
-        // Look for configured ore IDs in nearby, actually loaded stone.
+        // A target being aimed at must not be dropped between scan ticks.
+        if (aimedBlock != null && miningBlock == null) {
+            release(mc);
+            dig(mc,me,aimedBlock);
+            return;
+        }
+        // Detect common survival ores (especially coal and iron) even if
+        // the Tracers custom-block field still contains only diamond_ore.
         BlockPos ore = ticks % 8 == 0 ? findReachableOre(mc, me) : null;
         if (miningBlock != null) {
             if (mc.level.getBlockState(miningBlock).isAir()) {
@@ -243,6 +285,9 @@ public final class LockOnSurvival {
             dig(mc, me, ore);
             return;
         }
+        // Swapping a tool from the inventory needs a tick to synchronize.
+        // It is not a mining failure and must not trigger the stuck pause.
+        if (lastToolSwapTick == ticks) { release(mc); return; }
 
         BlockPos next = tunnelPoint(steps + 1);
         BlockPos support = next.below();
@@ -262,6 +307,11 @@ public final class LockOnSurvival {
         for (BlockPos pos : new BlockPos[] {next, next.above()}) {
             if (!Navigator.passable(mc.level, pos)) {
                 if (!canMine(mc, me, pos)) {
+                    if (lastToolSwapTick == ticks) {
+                        release(mc);
+                        reason="Moving pickaxe from inventory into hotbar";
+                        return;
+                    }
                     pause(mc,"Obstruction cannot be mined safely: " + pos.toShortString());
                     return;
                 }
@@ -276,11 +326,23 @@ public final class LockOnSurvival {
         double horizontal = Math.hypot(dx, dz);
         if (horizontal <= 0.52 && Math.abs(me.getY() - next.getY()) < 0.75) {
             steps++;
+            lastWaypoint=null;
             release(mc);
             return;
         }
         if (horizontal > 3.6) {
             pause(mc, "Player left original tunnel / desynchronized"); return;
+        }
+        if(!next.equals(lastWaypoint)) {
+            lastWaypoint=next;
+            lastDistance=horizontal;
+            lastDistanceTick=ticks;
+        } else if(horizontal+0.12 < lastDistance) {
+            lastDistance=horizontal;
+            lastDistanceTick=ticks;
+        } else if(ticks-lastDistanceTick > 100) {
+            pause(mc, "Movement stuck: no progress toward "+next.toShortString());
+            return;
         }
         // At each fourth block descend exactly one block on a supported
         // staircase. Horizontal-only safeForward() would falsely report
@@ -321,6 +383,8 @@ public final class LockOnSurvival {
         for (int i=0; i<36; i++) {
             ItemStack stack = me.getInventory().getItem(i);
             if (stack.isEmpty() || !stack.is(ItemTags.PICKAXES)) continue;
+            if (stack.isDamageableItem()
+                && stack.getMaxDamage()-stack.getDamageValue()<=3) continue;
             if (state.is(BlockTags.NEEDS_DIAMOND_TOOL)
                 && !(stack.is(Items.DIAMOND_PICKAXE)
                     || stack.is(Items.NETHERITE_PICKAXE))) continue;
@@ -347,6 +411,7 @@ public final class LockOnSurvival {
                 if(me.getInventory().getItem(i).isEmpty()){targetSlot=i;break;}
             mc.gameMode.handleContainerInput(me.containerMenu.containerId,
                 best,targetSlot,ContainerInput.SWAP,me);
+            lastToolSwapTick=ticks;
             return false;
         }
         me.getInventory().setSelectedSlot(best);
@@ -354,8 +419,8 @@ public final class LockOnSurvival {
     }
 
     private static BlockPos findReachableOre(Minecraft mc, LocalPlayer me) {
-        Set<String> ids = LockOnSettings.customBlockIds();
-        if (ids.isEmpty()) return null;
+        Set<String> ids = new HashSet<>(SURVIVAL_ORES);
+        ids.addAll(LockOnSettings.customBlockIds());
         BlockPos at = BlockPos.containing(me.getX(), me.getY(), me.getZ());
         BlockPos best=null;
         double bestSq = 4.1 * 4.1;
@@ -377,23 +442,61 @@ public final class LockOnSurvival {
     }
 
     private static void dig(Minecraft mc, LocalPlayer me, BlockPos p) {
-        if (miningBlock != null && !miningBlock.equals(p)) cancelDig(mc);
+        if (mc.gameMode == null || mc.level == null) return;
+        if (mc.level.getBlockState(p).isAir()) {
+            if (miningBlock != null && miningBlock.equals(p)) finishDig(mc);
+            aimedBlock = null;
+            return;
+        }
+        if (!hasWorkingPickaxe(me)) {
+            cancelDig(mc);
+            reason = "Pickaxe missing: cannot mine";
+            return;
+        }
+        release(mc);
+        // Vanilla server mining is ray- and facing-sensitive. Previously the
+        // bot called startDestroyBlock without ever looking DOWN or at the
+        // target. Aim on the first tick, allow the normal movement packet to
+        // transmit pitch/yaw, then start mining on a later gameplay tick.
+        face(me,Vec3.atCenterOf(p));
+        if (aimedBlock == null || !aimedBlock.equals(p)) {
+            if (miningBlock != null) cancelDig(mc);
+            aimedBlock = p;
+            aimedSince = ticks;
+            reason = "Aiming at " + p.toShortString();
+            return;
+        }
+        if (ticks - aimedSince < 2) return;
+        if (me.getEyePosition().distanceTo(Vec3.atCenterOf(p)) > 4.2) {
+            cancelDig(mc);
+            pause(mc,"Dig target outside normal Survival reach");
+            return;
+        }
+        BlockHitResult actual=mc.level.clip(new ClipContext(
+            me.getEyePosition(),Vec3.atCenterOf(p),
+            ClipContext.Block.COLLIDER,ClipContext.Fluid.NONE,me));
+        if(actual.getType()!=HitResult.Type.BLOCK
+            || !actual.getBlockPos().equals(p)) {
+            cancelDig(mc);
+            pause(mc,"Dig line of sight blocked at "+p.toShortString());
+            return;
+        }
         if (miningBlock == null) {
             miningBlock = p;
             miningStarted = ticks;
-            miningFace = facingBlock(me, p);
-            mc.gameMode.startDestroyBlock(p, miningFace);
-        } else {
-            mc.gameMode.continueDestroyBlock(p, miningFace);
-            if (ticks % 4 == 0) {
+            miningFace = actual.getDirection();
+            mc.gameMode.startDestroyBlock(p,miningFace);
+            reason = "Mining "+p.toShortString()+" (looking at block)";
+        } else if (miningBlock.equals(p)) {
+            mc.gameMode.continueDestroyBlock(p,miningFace);
+            if (ticks % 5 == 0)
                 me.swing(InteractionHand.MAIN_HAND,
-                    me.getMainHandItem().getAttackAnimation(), false);
-            }
+                    me.getMainHandItem().getAttackAnimation(),false);
         }
         if (mc.level.getBlockState(p).isAir()) {
             finishDig(mc);
         } else if (ticks-miningStarted > MAX_MINING_TICKS) {
-            pause(mc,"Could not break block (server protection or wrong tool)");
+            pause(mc,"Block not breaking after 12s; protected or unsuitable tool");
         }
     }
 
@@ -407,12 +510,25 @@ public final class LockOnSurvival {
 
     private static void finishDig(Minecraft mc) {
         miningBlock = null;
+        aimedBlock = null;
         blocksMined++;
+        reason = "Mined "+blocksMined+" blocks";
     }
 
     private static void cancelDig(Minecraft mc) {
         if (miningBlock != null && mc.gameMode != null) mc.gameMode.stopDestroyBlock();
         miningBlock = null;
+        aimedBlock = null;
+    }
+
+    private static boolean hasWorkingPickaxe(LocalPlayer me) {
+        for (int i=0;i<36;i++) {
+            ItemStack item=me.getInventory().getItem(i);
+            if (!item.is(ItemTags.PICKAXES)) continue;
+            if (!item.isDamageableItem()
+                || item.getMaxDamage()-item.getDamageValue() > 3) return true;
+        }
+        return false;
     }
 
     private static boolean hazardAround(ClientLevel world, BlockPos point) {
