@@ -37,7 +37,7 @@ import net.minecraft.util.Mth;
  * Does not request server chunks, teleport, or assume creative permissions.
  */
 public final class LockOnSurvival {
-    private enum Phase { OFF, BOOTSTRAP, TUNNEL, RETURN, BASE, PAUSED }
+    private enum Phase { OFF, BOOTSTRAP, TUNNEL, RETURN, BASE, PAUSED, RECOVER }
     private static Phase phase = Phase.OFF;
     private static BlockPos base;
     private static ClientLevel world;
@@ -48,6 +48,8 @@ public final class LockOnSurvival {
     private static int ticks;
     private static int startTick;
     private static int lastMobHit = -1000;
+    private static boolean combatActive;
+    private static boolean reachedDeath;
     private static java.util.UUID mobTargetId;
     private static int mobAimSince = -1000;
     private static int mobWeaponChanged = -1000;
@@ -58,6 +60,11 @@ public final class LockOnSurvival {
     private static boolean sawDrop;
     private static java.util.Map<Item,Integer> inventoryBeforeDig=java.util.Map.of();
     private static boolean seekingStone;
+    private static BlockPos deathPosition,deathPickupPoint,pickupStanding;
+    private static Object deathDimension;
+    private static int deathTicks,recoveryTicks,deathQuietTicks;
+    private record DropTask(BlockPos position,java.util.Map<Item,Integer> inventory) {}
+    private static final java.util.ArrayDeque<DropTask> pendingDrops=new java.util.ArrayDeque<>();
     private static BlockPos towerBlock;
     private static int towerStarted, towerLastUse=-100;
     private static boolean escapeRequested;
@@ -113,6 +120,10 @@ public final class LockOnSurvival {
         LocalPlayer me = mc.player;
         if (mc.level == null || me == null || !me.isAlive() || me.isSpectator()) return;
         world = mc.level;
+        deathPosition=null;
+        deathPickupPoint=null;
+        pendingDrops.clear();
+        LockOnTravel.reset(mc);
         retreatOrigin=null;
         safeTicks=0;
         LockOnFood.reset();
@@ -150,12 +161,86 @@ public final class LockOnSurvival {
         LockOnBase.stop(mc);
         LockOnBootstrap.stop(mc);
         phase = Phase.OFF;
+        combatActive=false;
+        LockOnCombat.stopUse(mc);
+        deathPosition=null;
+        pendingDrops.clear();
+        LockOnTravel.reset(mc);
         pickupBlock=null;
         towerBlock=null;
         escapeRequested=false;
         eating = false;
         foodSlot = -1;
         if (mc.player != null && message != null && !message.isBlank()) notice(mc.player,message);
+    }
+
+    static boolean recoveringDeath() { return deathPosition!=null; }
+
+    static boolean handleDeath(Minecraft mc) {
+        if(!enabled()) return false;
+        if(mc.player==null || mc.level==null) return deathPosition!=null;
+        if(!mc.player.isAlive()) {
+            if(deathPosition==null) {
+                deathPosition=mc.player.blockPosition();
+                deathDimension=mc.level.dimension();
+                deathTicks=recoveryTicks=deathQuietTicks=0;
+                reachedDeath=false;
+                LockOnCombat.stopUse(mc);
+                deathPickupPoint=null;
+                cancelDig(mc);
+                release(mc);
+                LockOnTravel.reset(mc);
+                pendingDrops.clear();
+                pickupBlock=towerBlock=null;
+                phase=Phase.RECOVER;
+                reason="Died: waiting to respawn and recover dropped equipment";
+            }
+            if(++deathTicks>=40 && deathTicks%40==0) mc.player.respawn();
+            return true;
+        }
+        if(deathPosition!=null) {
+            if(!deathDimension.equals(mc.level.dimension())) {
+                stop(mc,"Death occurred in another dimension; return there manually to recover items");
+                return true;
+            }
+            if(mc.player.isSpectator()) {
+                stop(mc,"Spectator/hardcore state: ordinary respawn recovery is unavailable");
+                return true;
+            }
+            world=mc.level;
+        }
+        return false;
+    }
+
+    private static void recoverDeath(Minecraft mc) {
+        if(pickupBlock!=null && collectMinedDrop(mc)) return;
+        if(++recoveryTicks>6000) {stop(mc,"Death recovery timed out after five minutes");return;}
+        reason="Returning to death location "+deathPosition.toShortString();
+        if(!reachedDeath && mc.player.position().distanceToSqr(Vec3.atCenterOf(deathPosition))>9) {
+            LockOnTravel.walk(mc,LockOnTravel.standingPosition(mc,deathPosition));return;
+        }
+        reachedDeath=true;
+        if(deathPickupPoint!=null) {
+            if(LockOnTravel.walk(mc,deathPickupPoint)) {
+                if(++deathQuietTicks>20) {deathPickupPoint=null;deathQuietTicks=0;}
+            }
+            return;
+        }
+        for(Entity e:mc.level.entitiesForRendering()) {
+            if(e instanceof ItemEntity item && item.isAlive()
+                && item.position().distanceToSqr(Vec3.atCenterOf(deathPosition))<64) {
+                deathPickupPoint=LockOnTravel.standingPosition(mc,item.blockPosition());
+                deathQuietTicks=0;
+                return;
+            }
+        }
+        release(mc);
+        if(++deathQuietTicks<60) return;
+        deathPosition=null;
+        LockOnBase.reset();
+        LockOnBootstrap.reset(mc,base,baseFacing);
+        phase=Phase.RETURN;
+        reason="Death location searched; returning home with recovered inventory";
     }
 
     public static void tick(Minecraft mc) {
@@ -192,9 +277,8 @@ public final class LockOnSurvival {
             reason = "low air: swimming upward / paused";
             return;
         }
-        if (me.isOnFire() || me.isInLava() || me.isInWall()
-            || me.fallDistance > 2.0f) {
-            pause(mc, "DANGER: fire/lava/suffocation/fall risk; disabled");
+        if (me.isInLava()) {
+            pause(mc, "Lava hazard: movement stopped");
             return;
         }
 
@@ -207,24 +291,27 @@ public final class LockOnSurvival {
         int threats=0;
         Monster danger=hostile;
         for(Entity entity:mc.level.entitiesForRendering()) {
-            if(entity instanceof Monster monster && monster.isAlive() && monster.distanceToSqr(me)<64) {
+            if(entity instanceof Monster monster && monster.isAlive() && monster.distanceToSqr(me)<100
+                && me.hasLineOfSight(monster)) {
                 threats++;
                 if(monster instanceof Creeper) danger=monster;
             }
         }
-        if(danger!=null && danger.distanceToSqr(me)<64
+        if(danger!=null && danger.distanceToSqr(me)<100
             && SurvivalPolicy.shouldFlee(me.getHealth(),danger instanceof Creeper,threats,
                 LockOnSettings.survivalFightMobs())) {
             flee(mc,danger);
             return;
         }
         if (enemyNear && LockOnSettings.survivalFightMobs() && me.getHealth()>9) {
-            interruptWork(mc);
+            if(!combatActive) {interruptWork(mc);combatActive=true;}
             fightHostile(mc,me,hostile);
             return;
         }
+        if(combatActive) {combatActive=false;LockOnCombat.stopUse(mc);}
+        if(deathPosition!=null) {recoverDeath(mc);return;}
         if(retreatOrigin!=null) {
-            if(++safeTicks<40) {release(mc);tryEat(mc,me);return;}
+            if(++safeTicks<40) {release(mc);LockOnCombat.stopUse(mc);tryEat(mc,me);return;}
             if(LockOnTravel.walk(mc,retreatOrigin)) retreatOrigin=null;
             reason="Returning to interrupted work after danger";
             return;
@@ -251,7 +338,8 @@ public final class LockOnSurvival {
                 && (LockOnFood.count(mc)<8 || LockOnFood.pending())
                 && Math.abs(me.getY()-base.getY())<3) {
                 reason="Gathering nearby mature crops/berries and replanting";
-                if(LockOnFood.hasWheat(mc)) {
+                if(LockOnFood.hasWheat(mc) || (LockOnFood.rawCount(mc)>=4
+                    && (LockOnBase.hasFurnace(mc) || countItem(me,Items.COBBLESTONE)>=8))) {
                     phase=Phase.RETURN;
                     returnToBase(mc,me);
                     return;
@@ -344,11 +432,19 @@ public final class LockOnSurvival {
         }
 
         if (phase == Phase.TUNNEL) {
-            if(seekingStone && countItem(me,Items.COBBLESTONE)>=3) {
+            if(me.isInWater()) {
+                BlockPos next=tunnelPoint(steps+1);
+                if(LockOnTravel.walk(mc,next)) steps++;
+                reason="Swimming toward next supported mining waypoint";
+                return;
+            }
+            if((seekingStone && countItem(me,Items.COBBLESTONE)>=3)
+                || (!hasIronPickaxe(me) && (countItem(me,Items.RAW_IRON)+countItem(me,Items.IRON_INGOT)>=3)
+                    && countItem(me,Items.COBBLESTONE)>=8)) {
                 cancelDig(mc);
                 release(mc);
                 phase=Phase.RETURN;
-                reason="Three cobblestone collected: returning to craft a stone pickaxe";
+                reason="Upgrade materials collected: returning to smelt and craft a better pickaxe";
                 return;
             }
             if (!hasWorkingPickaxe(me)) {
@@ -402,9 +498,16 @@ public final class LockOnSurvival {
         }
         BlockState ground = mc.level.getBlockState(support);
         if (ground.isAir() || !ground.getFluidState().isEmpty()
-            || mc.level.getBlockState(next).getFluidState().isEmpty() == false
-            || mc.level.getBlockState(next.above()).getFluidState().isEmpty() == false) {
-            pause(mc, "Dangerous ground / liquid ahead; stop"); return;
+            ) {
+            if(mc.level.getBlockState(next).getFluidState().is(net.minecraft.tags.FluidTags.WATER)
+                || ground.getFluidState().is(net.minecraft.tags.FluidTags.WATER)) {
+                LockOnTravel.walk(mc,next);
+                reason="Swimming through water on mining route";
+                return;
+            }
+            reason="No supporting ground at planned step; finding a supported route";
+            LockOnTravel.walk(mc,next);
+            return;
         }
         if (hazardAround(mc.level, next)) {
             pause(mc, "Lava/fire/void detected near next tunnel block"); return;
@@ -497,19 +600,8 @@ public final class LockOnSurvival {
             ItemStack stack = me.getInventory().getItem(i);
             if (stack.isEmpty() || !stack.is(ItemTags.PICKAXES)) continue;
             if (stack.isDamageableItem()
-                && stack.getMaxDamage()-stack.getDamageValue()<=3) continue;
-            if (state.is(BlockTags.NEEDS_DIAMOND_TOOL)
-                && !(stack.is(Items.DIAMOND_PICKAXE)
-                    || stack.is(Items.NETHERITE_PICKAXE))) continue;
-            if (state.is(BlockTags.NEEDS_IRON_TOOL)
-                && !(stack.is(Items.IRON_PICKAXE)
-                    || stack.is(Items.DIAMOND_PICKAXE)
-                    || stack.is(Items.NETHERITE_PICKAXE))) continue;
-            if (state.is(BlockTags.NEEDS_STONE_TOOL)
-                && !(stack.is(Items.STONE_PICKAXE)
-                    || stack.is(Items.IRON_PICKAXE)
-                    || stack.is(Items.DIAMOND_PICKAXE)
-                    || stack.is(Items.NETHERITE_PICKAXE))) continue;
+                && stack.getMaxDamage()-stack.getDamageValue()<=0) continue;
+            if(state.requiresCorrectToolForDrops() && !stack.isCorrectToolForDrops(state)) continue;
             float speed = stack.getDestroySpeed(state);
             if (speed > bestSpeed) {best=i;bestSpeed=speed;}
         }
@@ -544,9 +636,20 @@ public final class LockOnSurvival {
             if (!mc.level.hasChunk(p.getX()>>4,p.getZ()>>4))continue;
             BlockState s = mc.level.getBlockState(p);
             String id=BuiltInRegistries.BLOCK.getKey(s.getBlock()).toString();
-            boolean stone=seekingStone && (s.is(Blocks.STONE)||s.is(Blocks.COBBLESTONE));
-            if(seekingStone ? !stone : !ids.contains(id)) continue;
-            double d2=me.getEyePosition().distanceToSqr(Vec3.atCenterOf(p));
+            boolean needsStone=countItem(me,Items.COBBLESTONE)<11 && !LockOnBase.hasFurnace(mc);
+            boolean stone=(seekingStone || needsStone) && (s.is(Blocks.STONE)||s.is(Blocks.COBBLESTONE));
+            boolean iron=s.is(Blocks.IRON_ORE)||s.is(Blocks.DEEPSLATE_IRON_ORE);
+            if(seekingStone ? !stone : (!stone && !ids.contains(id))) continue;
+            boolean harvestable=false;
+            for(int slot=0;slot<36;slot++) {
+                ItemStack tool=me.getInventory().getItem(slot);
+                if(tool.is(ItemTags.PICKAXES) && tool.isCorrectToolForDrops(s)) harvestable=true;
+            }
+            if(!harvestable) continue;
+            double physicalDistance=me.getEyePosition().distanceToSqr(Vec3.atCenterOf(p));
+            if(physicalDistance>4.1*4.1) continue;
+            double d2=physicalDistance;
+            if(stone || (iron && !hasIronPickaxe(me))) d2-=20;
             if(d2>=bestSq)continue;
             BlockHitResult hit=mc.level.clip(new ClipContext(me.getEyePosition(),
                 Vec3.atCenterOf(p),ClipContext.Block.COLLIDER,ClipContext.Fluid.NONE,me));
@@ -644,7 +747,7 @@ public final class LockOnSurvival {
             ItemStack item=me.getInventory().getItem(i);
             if (!item.is(ItemTags.PICKAXES)) continue;
             if (!item.isDamageableItem()
-                || item.getMaxDamage()-item.getDamageValue() > 16) return true;
+                || item.getMaxDamage()-item.getDamageValue() > 0) return true;
         }
         return false;
     }
@@ -670,81 +773,48 @@ public final class LockOnSurvival {
         for(Entity e:mc.level.entitiesForRendering()){
             if (!(e instanceof Monster m) || !m.isAlive()) continue;
             double dist=e.distanceToSqr(me);
-            if(dist<bestSq){best=m;bestSq=dist;}
+            if(combatActive && m.getUUID().equals(mobTargetId) && dist<36 && me.hasLineOfSight(m)) return m;
+            if(dist<bestSq && me.hasLineOfSight(m)){best=m;bestSq=dist;}
         }
         return best;
     }
 
     private static void fightHostile(Minecraft mc, LocalPlayer me, Monster enemy) {
-        if (enemy == null) return;
-        String kind = enemy.getName().getString();
-        double dist = me.distanceTo(enemy);
-        reason = "Defending against " + kind + " at "
-            + (int) Math.ceil(dist) + " blocks";
-        if (enemy instanceof Creeper && dist < 4.0) {
-            release(mc);
-            reason = "Creeper close: avoid rushing into explosion radius";
-            flee(mc,enemy);
-            return;
+        if(enemy==null || mc.gameMode==null) return;
+        String kind=enemy.getName().getString();
+        if(!enemy.getUUID().equals(mobTargetId)) {mobTargetId=enemy.getUUID();mobAimSince=ticks;}
+        boolean weaponReady=LockOnCombat.equipWeapon(mc,false);
+        face(me,enemy.position().add(0,enemy.getBbHeight()*0.68,0));
+        double dist=me.distanceTo(enemy);
+        boolean safe=me.isInWater() || Navigator.safeForward(mc.level,me,
+            enemy.getX()-me.getX(),enemy.getZ()-me.getZ());
+        CombatTactics.Move move=CombatTactics.move(dist,3.0,0.08,true,!enemy.onGround(),
+            safe,false,false,false,me.onGround() || me.isInWater(),ticks-lastMobHit==1,false);
+        LockOnMovement.combat(mc,move.forward(),false,false,false,
+            move.sprint() && me.getFoodData().getFoodLevel()>6,me.isInWater());
+        if(ticks-lastMobHit==1) me.setSprinting(false);
+        reason="Defending against "+kind+": approaching / charging";
+        if(!weaponReady || ticks-mobAimSince<2) return;
+        LockOnCombat.shield(mc,enemy,ticks-lastMobHit);
+        if(me.isUsingItem() || !CombatTactics.readyForAttack(me.getMainHandItem().isEmpty(),
+            ticks-lastMobHit,me.getAttackStrengthScale(0.0f),0.95f)) return;
+        Vec3 eye=me.getEyePosition();
+        var box=enemy.getBoundingBox();
+        Vec3 end=eye.add(me.getViewVector(1.0f).scale(2.92));
+        if(!me.hasLineOfSight(enemy) || (!box.contains(eye) && box.clip(eye,end).isEmpty())) {
+            reason="Hostile outside actual hitbox reach";return;
         }
-        if (!enemy.getUUID().equals(mobTargetId)) {
-            mobTargetId=enemy.getUUID();
-            mobAimSince=ticks;
-        }
-        face(me, enemy.position().add(0,enemy.getBbHeight()*0.68,0));
-        release(mc);
-        if (dist > 2.85) {
-            if (dist < 6.4 && me.getHealth() > 10.0
-                && Navigator.safeForward(mc.level, me,
-                    enemy.getX()-me.getX(),enemy.getZ()-me.getZ())) {
-                moveForward(mc,false);
-                reason = "Chasing hostile " + kind + " (" + (int) dist + "m)";
-            } else {
-                reason = "Hostile " + kind + " detected; path not safe";
-            }
-            return;
-        }
-        // Looking toward the target and switching tools are client inputs;
-        // let at least two movement updates reach the server before punching.
-        if (ticks-mobAimSince<2) return;
-        if (ticks-lastMobHit<12 || me.getAttackStrengthScale(0.0f)<0.95f) {
-            reason = "Hostile within reach: waiting for hit cooldown";
-            return;
-        }
-        if (!me.hasLineOfSight(enemy)) {
-            reason = "Hostile in range but line of sight blocked";
-            return;
-        }
-        int sword=-1;
-        for (int i=0;i<36;i++)
-            if (me.getInventory().getItem(i).is(ItemTags.SWORDS)) {
-                sword=i;break;
-            }
-        if(sword>=9 && me.containerMenu instanceof InventoryMenu) {
-            mc.gameMode.handleContainerInput(me.containerMenu.containerId,sword,8,ContainerInput.SWAP,me);
-            mobWeaponChanged=ticks;
-            return;
-        }
-        if (sword>=0 && me.getInventory().getSelectedSlot()!=sword) {
-            me.getInventory().setSelectedSlot(sword);
-            mobWeaponChanged=ticks;
-            reason = "Equipping sword for hostile defense";
-            return;
-        }
-        if (ticks-mobWeaponChanged<2) return;
-        if (mc.gameMode == null) return;
         mc.gameMode.attack(me,enemy);
-        me.swing(InteractionHand.MAIN_HAND,
-            me.getMainHandItem().getAttackAnimation(),false);
+        me.swing(InteractionHand.MAIN_HAND,me.getMainHandItem().getAttackAnimation(),false);
         me.connection.send(ServerboundPunchPacket.INSTANCE);
         mobsAttacked++;
         lastMobHit=ticks;
-        reason = "Sent normal melee attack to hostile " + kind;
+        reason="Sent normal melee attack to hostile "+kind;
     }
 
     private static boolean tryEat(Minecraft mc, LocalPlayer me) {
         if(!LockOnSettings.survivalAutoEat()) return false;
-        if (me.getFoodData().getFoodLevel()>=19 && me.getHealth()>=15.0) {
+        if (me.getFoodData().getFoodLevel()>=20 || (me.getFoodData().getFoodLevel()>=19 && me.getHealth()>=15.0)) {
             if(eating)stopEating(mc);
             return false;
         }
@@ -758,7 +828,7 @@ public final class LockOnSurvival {
         for(int i=0;i<36;i++){
             ItemStack food=me.getInventory().getItem(i);
             if(food.isEmpty())continue;
-            if(LockOnFood.edible(food)) {foodSlot=i;break;}
+            if(LockOnFood.edible(food) || (me.getFoodData().getFoodLevel()<=8 && LockOnFood.rawMeat(food))) {foodSlot=i;break;}
         }
         if(foodSlot<0)return false;
         if(foodSlot>=9) {
@@ -775,6 +845,8 @@ public final class LockOnSurvival {
     }
 
     private static void stopEating(Minecraft mc) {
+        if(eating && mc.player!=null && mc.gameMode!=null && mc.player.isUsingItem())
+            mc.gameMode.releaseUsingItem(mc.player);
         eating=false;
         foodSlot=-1;
         mc.options.keyUse.setDown(false);
@@ -967,7 +1039,7 @@ public final class LockOnSurvival {
             ItemStack stack=player.getInventory().getItem(i);
             if(stack.is(ItemTags.PICKAXES) && !stack.is(Items.WOODEN_PICKAXE)
                 && !stack.is(Items.GOLDEN_PICKAXE)
-                && (!stack.isDamageableItem() || stack.getMaxDamage()-stack.getDamageValue()>16)) return true;
+                && (!stack.isDamageableItem() || stack.getMaxDamage()-stack.getDamageValue()>0)) return true;
         }
         return false;
     }
@@ -978,7 +1050,12 @@ public final class LockOnSurvival {
     }
 
     static void waitForDrop(BlockPos broken,java.util.Map<Item,Integer> before) {
+        if(pickupBlock!=null && !pickupBlock.equals(broken)) {
+            pendingDrops.addLast(new DropTask(broken.immutable(),java.util.Map.copyOf(before)));
+            return;
+        }
         pickupBlock=broken;
+        pickupStanding=null;
         inventoryBeforeDig=before;
         pickupSince=ticks;
         sawDrop=false;
@@ -1007,25 +1084,36 @@ public final class LockOnSurvival {
                 return true;
             }
             case COLLECT -> {
-                BlockPos target=nearest.blockPosition();
-                LockOnTravel.walk(mc,target);
+                if(pickupStanding==null) pickupStanding=LockOnTravel.standingPosition(mc,pickupBlock);
+                LockOnTravel.walk(mc,pickupStanding);
                 reason="Collecting mined drop before continuing";
                 return true;
             }
             case BLOCKED -> {
-                stop(mc,"Mined drop could not be collected safely; autoplay stopped");
-                return true;
+                LockOnTravel.reset(mc);
+                reason="Drop unreachable after recovery attempts; continuing other work";
             }
             case DONE -> reason="Drop collected; inventory increase confirmed";
             case NO_DROP -> reason="No dropped item appeared after waiting";
         }
         pickupBlock=null;
+        pickupStanding=null;
+        if(!pendingDrops.isEmpty()) {
+            DropTask next=pendingDrops.removeFirst();
+            waitForDrop(next.position(),next.inventory());
+        }
         release(mc);
         return true;
     }
 
+    private static boolean hasIronPickaxe(LocalPlayer me) {
+        return countItem(me,Items.IRON_PICKAXE)>0 || countItem(me,Items.DIAMOND_PICKAXE)>0
+            || countItem(me,Items.NETHERITE_PICKAXE)>0;
+    }
+
     private static void interruptWork(Minecraft mc) {
         cancelDig(mc);
+        LockOnTravel.reset(mc);
         towerBlock=null;
         escapeRequested=false;
         stopEating(mc);
@@ -1039,13 +1127,18 @@ public final class LockOnSurvival {
             interruptWork(mc);
         }
         safeTicks=0;
+        if(combatActive) {combatActive=false;LockOnCombat.stopUse(mc);}
+        if(mc.player.getFoodData().getFoodLevel()<20 && mc.player.distanceTo(danger)>5)
+            LockOnCombat.eat(mc);
+        else LockOnCombat.stopUse(mc);
         Vec3 away=mc.player.position().subtract(danger.position());
         double angle=Math.atan2(away.z,away.x);
         for(double offset:new double[]{0,0.6,-0.6,1.2,-1.2,1.57,-1.57}) {
             double dx=Math.cos(angle+offset), dz=Math.sin(angle+offset);
             if(Navigator.safeForward(mc.level,mc.player,dx,dz)) {
                 face(mc.player,mc.player.getEyePosition().add(dx,0,dz));
-                moveForward(mc,mc.player.getFoodData().getFoodLevel()>6);
+                moveForward(mc,mc.player.getFoodData().getFoodLevel()>6 && !mc.player.isUsingItem());
+                LockOnMovement.jump(mc,mc.player.isInWater());
                 reason="Fleeing danger: "+danger.getName().getString();
                 return;
             }
@@ -1073,6 +1166,7 @@ public final class LockOnSurvival {
     private static void pause(Minecraft mc,String why) {
         cancelDig(mc);
         release(mc);
+        LockOnCombat.stopUse(mc);
         reason=why;
         phase=Phase.PAUSED;
         if(mc.player!=null)notice(mc.player,why+" (F7 to stop)");

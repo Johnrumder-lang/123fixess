@@ -1,28 +1,22 @@
-# LockOn v3.5.4 — stone gathering, tunnel exits and drop pickup
+# LockOn v3.6.0 — survival recovery and combat
 
 Minecraft Java 26.3, Fabric Loader 0.20.1, Fabric API 0.165.2+26.3, Cloth Config 26.3.159, Java 25.
 
-Replace older LockOn JARs with `LockOn-26.3-v3.5.4.jar`. F7 starts/stops survival work, F6 opens settings and U prints diagnostics. Enable automatic repeat in Survival settings.
+Replace older LockOn JARs with `LockOn-26.3-v3.6.0.jar`. F7 starts/stops survival, F6 opens settings, and U prints diagnostics. Enable automatic repeat for successive mining trips. For PvP, G selects a player, R toggles combat, H toggles chase, B allows obstacle mining, and J enables optional jump criticals. Physical movement immediately gives control back to you and stops automation.
 
-Movement repair in v3.5.4
+## Changes in this release
 
-The survival controller no longer changes the keyboard bindings. Its movement intent is applied at the end of `KeyboardInput.tick`, updating both the input flags and movement vector. Physical movement input immediately stops autoplay and is preserved in the same player tick. F7 remains the start/stop key. Idle survival ticks leave keyboard input untouched. A sustained blocked movement request stops autoplay.
+- Combat and survival share input sampling, including forward movement, strafing, jumping and sprint requests. Normal hunger, item-use and collision restrictions still apply to sprinting. Both modes can swim and surface for air.
+- Mob defense keeps its target and equips a sword before checking attack readiness. It follows knockback with forward pressure, waits for weapon charge, and sends the normal attack, swing and punch sequence. Creepers, low health and three nearby visible monsters trigger escape.
+- PvP equips an available sword, switches to an axe against a blocking opponent, and returns to the sword when the shield drops. Available shields move into an empty offhand and block briefly between attacks, releasing before the next hit. The bot moves toward opponents using food and retreats while eating for its own recovery. Food and shield use are explicitly released when interrupted or disabled.
+- Ordinary survival deaths trigger respawn requests, return to the death location, and pickup attempts before returning home. Recovery works within the same dimension and times out after five minutes. Hardcore/spectator states and server respawn restrictions still apply.
+- Tools are used through their remaining durability. Mining checks the game's actual harvest requirements, gathers iron for an iron pickaxe, and skips ores that available tools cannot harvest. Copper pickaxes and other copper tools can be crafted when ingredients are available.
+- Travel keeps a waypoint instead of replanning every tick. It can clear real head/foot obstructions, open gates, swim through water, and take supported drops up to six blocks when estimated remaining health is at least six. Existing stair clearance and dirt/cobblestone towering handle tunnel exits. Lava remains hazardous.
+- Mined-item collection targets a supported standing position in the mined block's column. It waits for pickup, queues drops from clearing obstructions, and abandons an unreachable pickup after a bounded recovery period rather than spinning indefinitely.
+- Food gathering harvests mature crops/berries and replants available seeds. When food is needed, it also hunts nearby unnamed adult cows, pigs, sheep, chickens and rabbits. Meat can be cooked in the base furnace using planks as fuel; raw meat is available for emergency hunger. The bot replenishes wood/sticks, builds workstations, crafts iron armor/tools, smelts and stores resources between trips.
 
-Tree and workbench repair in v3.5.4
+Start on supported terrain with access to trees and food. Loaded terrain, available resources, storage capacity and server protections can limit progress. This version does not promise indefinite unattended survival or build/breed a renewable animal farm. Fall recovery uses checked landings and terrain clearing; bucket-clutch automation is not included.
 
-Tree gathering routes around obstacles to natural trees in loaded terrain, scanning within 32 blocks and surveying safe points up to 48 blocks from home when no tree is found. Workbench placement chooses supported space near home, walks to a position with a clear view of the support block, and retries another site after rejected placement. The ray used to target the floor extends slightly into the supporting block. Base processing reuses the selected workbench position.
+## Verification
 
-Inherited survival features follow.
-
-- Creepers, low health and groups of three monsters trigger escape along supported terrain. After the threat clears, the bot attempts to return to the interrupted work position.
-- Nearby reachable fence gates can be opened during travel.
-- Each mining cycle replenishes wood and sticks and replaces missing pickaxes. Subsequent passes extend the four mining tunnels.
-- Mature crops and berry bushes within 12 blocks are harvested. Dropped food and seeds are collected, and harvested crops are replanted when seeds are available. Food in the main inventory can be moved to the hotbar and eaten.
-- Base crafting includes bread, iron armor, sword, axe, shovel and hoe when the resources are available. Worn iron armor can be replaced and equipped. Iron for pickaxes is reserved before armor crafting.
-- Furnaces accept raw food and potatoes alongside ores, and can burn planks. An empty fuel slot no longer interrupts a furnace that is still burning.
-- Storage retains supplies for replacement tools. Crafting continues when its ingredients have already moved into the grid, and avoids picking up the source again when the cursor is empty.
-- The movement controller releases only keys it owns, preserving manual input when autoplay is disabled.
-
-Start on supported surface terrain near natural trees and an existing crop or berry patch. The bot harvests existing food sources. It does not create a new farm, breed animals, or explore indefinitely to find unavailable resources. Storage capacity, blocked routes, server protections, unloaded terrain and missing supplies can still prevent progress. Escape requires a traversable route and cannot guarantee survival. Live gameplay has not been verified for this release.
-
-The GitHub workflow compiles the Minecraft mod and runs deterministic policy and source checks. These checks do not simulate a Minecraft world.
+The GitHub workflow compiles the Fabric mod against Minecraft 26.3 and builds the optional Paper companion. It runs production movement and combat inventory/use code against small client fixtures, deterministic combat/survival/mining/crafting policy tests, attack packet-order contracts, autonomous-flow source checks, and world-export tests. The fixtures test control ownership, sustained sprint input, weapon switching, shield release and eating completion; they do not simulate server damage, collision physics or latency. Live gameplay remains unverified.

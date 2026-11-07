@@ -18,3 +18,12 @@ attempts = client.index("attempts++;", punch)
 assert attack < swing < punch < attempts, "Must mirror vanilla 26.3 attack → swing → punch order"
 assert "lastAttackHold = \"attack + punch packets sent\";" in client
 print("Minecraft 26.3 attack/punch packet ordering contract: passed")
+
+for file,call in [("LockOnSurvival.java","mc.gameMode.attack(me,enemy);"),
+                  ("LockOnFood.java","mc.gameMode.attack(mc.player,prey);")]:
+    source=Path("src/main/java/lockon",file).read_text()
+    attack=source.index(call)
+    swing=source.index(".swing(",attack)
+    punch=source.index("ServerboundPunchPacket.INSTANCE",swing)
+    assert attack<swing<punch,file
+print("Hostile defense and hunting packet ordering contracts: passed")

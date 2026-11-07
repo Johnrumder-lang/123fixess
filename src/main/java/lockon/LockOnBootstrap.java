@@ -598,7 +598,7 @@ final class LockOnBootstrap {
             ItemStack tool=p.getInventory().getItem(i);
             if(tool.is(ItemTags.PICKAXES)
                 && (!tool.isDamageableItem()
-                    || tool.getMaxDamage()-tool.getDamageValue()>16)) return true;
+                    || tool.getMaxDamage()-tool.getDamageValue()>0)) return true;
         }
         return false;
     }
@@ -681,7 +681,7 @@ final class LockOnBootstrap {
 
     private static void cleanupCraftingGrid(Minecraft mc) {
         if(ticks-lastClick<3) return;
-        if(ticks-cleaningTicks>160) {
+        if(ticks-cleaningTicks>00) {
             cleaningRecipe=false;
             step=Step.WAIT;
             detail="Craft grid could not be recovered; clear it manually";

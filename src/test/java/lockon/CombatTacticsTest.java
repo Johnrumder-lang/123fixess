@@ -62,6 +62,17 @@ public final class CombatTacticsTest {
             true, false, true, true, true, false, true, false, false);
         check(!invalid.forward() && !invalid.sprint(), "invalid input must fail closed");
 
+        check(CombatTactics.shouldEat(10,19),"low health starts eating when food bar has space");
+        check(!CombatTactics.shouldEat(6,20),"full hunger must not cause endless failed eating");
+        check(CombatTactics.shouldEat(20,8),"low hunger starts eating even at full health");
+        check(!CombatTactics.shouldEat(20,18),"healthy fighter can keep pressure");
+        check(CombatTactics.shouldShield(3,5,false,false),"block during cooldown");
+        check(!CombatTactics.shouldShield(3,8,false,false),"release shield before next attack");
+        check(!CombatTactics.shouldShield(3,5,true,false),"rush enemy eating instead of shielding");
+        check(!CombatTactics.shouldShield(3,5,false,true),"axe attack against enemy shield");
+        check(!CombatTactics.shouldShield(7,5,false,false),"do not slow distant chase with shield");
+        var healingPressure=CombatTactics.move(2.4,3.0,0,true,false,true,true,true,true,true,false,false);
+        check(healingPressure.forward() && healingPressure.sprint(),"rush eating target at melee distance");
         System.out.println("Combat tactics: " + cases + " checks passed");
     }
 }

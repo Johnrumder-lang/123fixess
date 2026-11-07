@@ -143,8 +143,9 @@ public final class LockOnClient implements ClientModInitializer {
                 System.out.println("[LockOn] Migrated conflicting P/O keys to F7/F6.");
             }
         }
+        if(LockOnSurvival.handleDeath(mc)) return;
         if (mc.level != previousLevel) {
-            if (LockOnSurvival.enabled())
+            if (LockOnSurvival.enabled() && !LockOnSurvival.recoveringDeath())
                 LockOnSurvival.stop(mc, "World changed: survival mode stopped");
             previousLevel = mc.level;
             enabled = false;
@@ -295,7 +296,7 @@ public final class LockOnClient implements ClientModInitializer {
         }
 
         boolean bareHand = me.getMainHandItem().isEmpty();
-        boolean swordEquipped = me.getMainHandItem().is(ItemTags.SWORDS);
+        boolean swordEquipped = me.getMainHandItem().is(ItemTags.SWORDS) || me.getMainHandItem().is(ItemTags.AXES);
         int weaponMode = bareHand ? 1 : (swordEquipped ? 0 : 2);
         if (weaponMode != previousWeaponMode) {
             previousWeaponMode = weaponMode;
@@ -324,15 +325,44 @@ public final class LockOnClient implements ClientModInitializer {
             return;
         }
 
+        if(LockOnCombat.eat(mc)) {
+            stopMining(mc);
+            retreatWhileEating(mc,me,target);
+            lastAttackHold="eating for recovery";
+            return;
+        }
+        boolean weaponReady=LockOnCombat.equipWeapon(mc,target.isBlocking());
         aimAt(me, target);
-        if (chase && !me.isPassenger() && !me.isFallFlying() && !me.isInWater()) {
+        if (chase && me.isInWater()) {
+            stopMining(mc);
+            setMovement(mc,true,false,false,false,me.getFoodData().getFoodLevel()>6);
+            LockOnMovement.jump(mc,me.getAirSupply()<200 || target.getY()>=me.getY());
+        } else if (chase && !me.isPassenger() && !me.isFallFlying() && !me.isInWater()) {
             updateStuckRecovery(me, target);
             chaseTarget(mc, me, target);
         } else {
             stopMining(mc);
             releaseMovement(mc);
         }
-        attack(mc, me, target);
+        if(weaponReady) {
+            LockOnCombat.shield(mc,target,ticks-lastAttackTick);
+            attack(mc, me, target);
+        }
+    }
+
+    private static void retreatWhileEating(Minecraft mc,LocalPlayer me,Player target) {
+        Vec3 away=me.position().subtract(target.position());
+        double angle=Math.atan2(away.z,away.x);
+        for(double offset:new double[]{0,0.65,-0.65,1.2,-1.2}) {
+            double dx=Math.cos(angle+offset),dz=Math.sin(angle+offset);
+            if(Navigator.safeForward(mc.level,me,dx,dz)) {
+                LockOnTravel.face(mc,me.getEyePosition().add(dx,0,dz));
+                setMovement(mc,true,false,false,false,false);
+                LockOnMovement.jump(mc,me.isInWater());
+                return;
+            }
+        }
+        releaseMovement(mc);
     }
 
     private static void drainKeys() {
@@ -452,7 +482,7 @@ public final class LockOnClient implements ClientModInitializer {
         // Keep sword and fist support, without triggering automated attacks
         // for bows, pickaxes, food, or any other non-sword item.
         boolean bareHand = me.getMainHandItem().isEmpty();
-        boolean swordEquipped = me.getMainHandItem().is(ItemTags.SWORDS);
+        boolean swordEquipped = me.getMainHandItem().is(ItemTags.SWORDS) || me.getMainHandItem().is(ItemTags.AXES);
         if (mc.gameMode == null || me.isUsingItem()
             || (!swordEquipped && !bareHand) || miningPos != null) {
             resetAttackSchedule();
@@ -647,7 +677,7 @@ public final class LockOnClient implements ClientModInitializer {
             boolean rightSafe = safeSide(mc.level, me, Math.cos(yaw), Math.sin(yaw));
             boolean airborneOpponent = !target.onGround()
                 || target.getDeltaMovement().y > 0.08;
-            boolean combo = comboWindow(me, target);
+            boolean combo = comboWindow(me, target) || LockOnCombat.opponentEating(target);
             double radialSpeed = 0.0;
             if (d > 0.01) {
                 Vec3 relative = filteredVelocity.subtract(me.getDeltaMovement());
@@ -840,34 +870,33 @@ public final class LockOnClient implements ClientModInitializer {
     }
 
     private static void setMovement(Minecraft mc, boolean f, boolean b, boolean l, boolean r, boolean sprint) {
-        mc.options.keyJump.setDown(ticks <= navigationJumpUntil);
-        mc.options.keyUp.setDown(f);
-        mc.options.keyDown.setDown(b);
-        mc.options.keyLeft.setDown(l);
-        mc.options.keyRight.setDown(r);
-        mc.options.keySprint.setDown(sprint);
-        ownsMovement = true;
+        LockOnMovement.combat(mc,f,b,l,r,sprint,ticks<=navigationJumpUntil);
+        ownsMovement=true;
     }
 
     private static void releaseSprint(Minecraft mc) {
-        if (ownsMovement) mc.options.keySprint.setDown(false);
+        if(ownsMovement) LockOnMovement.sprint(false);
     }
 
     private static void releaseMovement(Minecraft mc) {
-        if (!ownsMovement) return;
-        mc.options.keyUp.setDown(false);
-        mc.options.keyDown.setDown(false);
-        mc.options.keyLeft.setDown(false);
-        mc.options.keyRight.setDown(false);
-        mc.options.keySprint.setDown(false);
-        mc.options.keyJump.setDown(false);
-        navigationJumpUntil = -1;
-        ownsMovement = false;
+        if(!ownsMovement) return;
+        LockOnMovement.stop(mc);
+        navigationJumpUntil=-1;
+        ownsMovement=false;
+    }
+
+    static boolean combatEnabled() { return enabled && targetId!=null; }
+
+    static void manualTakeover(Minecraft mc) {
+        enabled=false;
+        stopActions(mc);
+        hint(mc,"Manual movement: combat stopped. R enables it again.");
     }
 
     private static void stopActions(Minecraft mc) {
         stopMining(mc);
         releaseMovement(mc);
+        LockOnCombat.stopUse(mc);
     }
 
     private static void clearNavigation(Minecraft mc) {

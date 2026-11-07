@@ -33,7 +33,7 @@ import net.minecraft.core.registries.BuiltInRegistries;
  * may be manipulated. One inventory input per game tick at most.
  */
 final class LockOnBase {
-    private enum Stage { TABLE, CHEST, UPGRADE_TOOL, FURNACE, SMELT, UPGRADE_IRON, EQUIPMENT, FOOD, COMPACT, STORE, DONE }
+    private enum Stage { TABLE, CHEST, UPGRADE_TOOL, FURNACE, SMELT, UPGRADE_IRON, UPGRADE_COPPER, EQUIPMENT, FOOD, COMPACT, STORE, DONE }
     private static Stage stage = Stage.TABLE;
     private static BlockPos table, chest, furnace;
     private static int ticks, stageTicks, lastInput;
@@ -63,6 +63,10 @@ final class LockOnBase {
         missingMaterials=false;
         openAttempts=0;
         lastFurnaceOutput=0;
+    }
+
+    static boolean hasFurnace(Minecraft mc) {
+        return furnace!=null && mc.level!=null && mc.level.getBlockState(furnace).is(Blocks.FURNACE);
     }
 
     static boolean busyCrafting() { return craftJob!=null || moveStage>0; }
@@ -203,8 +207,8 @@ final class LockOnBase {
                     return false;
                 }
                 if(menu.getSlot(0).getItem().isEmpty()){
-                    int src=findInventorySlot(menu,start, s->
-                        SurvivalPolicy.shouldSmelt(itemId(s)));
+                    int src=findInventorySlot(menu,start,LockOnFood::rawMeat);
+                    if(src<0) src=findInventorySlot(menu,start,s->SurvivalPolicy.shouldSmelt(itemId(s)));
                     if(src>=0) {
                         moveStack(mc,src,0);
                         return false;
@@ -255,6 +259,17 @@ final class LockOnBase {
                 }
                 if(craft(mc,Items.IRON_INGOT,new int[]{1,2,3},
                     Items.STICK,new int[]{5,8},false))close(mc);
+            }
+            case UPGRADE_COPPER -> {
+                if(hasTool(mc.player,Items.COPPER_PICKAXE)||hasTool(mc.player,Items.IRON_PICKAXE)
+                    ||hasTool(mc.player,Items.DIAMOND_PICKAXE)||hasTool(mc.player,Items.NETHERITE_PICKAXE)) {
+                    advance(mc);return false;
+                }
+                if(!isBlock(mc,table,Blocks.CRAFTING_TABLE)
+                    || (craftJob==null && (countInventory(mc.player,Items.COPPER_INGOT)<3
+                        ||countInventory(mc.player,Items.STICK)<2))) {advance(mc);return false;}
+                if(!open(mc,table,CraftingMenu.class)) return false;
+                if(craft(mc,Items.COPPER_INGOT,new int[]{1,2,3},Items.STICK,new int[]{5,8},false)) close(mc);
             }
             case EQUIPMENT -> {
                 if(!isBlock(mc,table,Blocks.CRAFTING_TABLE)) {advance(mc);return false;}
@@ -503,7 +518,8 @@ final class LockOnBase {
         if(s.is(ItemTags.PICKAXES) || s.is(ItemTags.SWORDS) || s.is(ItemTags.AXES)
             || s.is(ItemTags.SHOVELS) || s.is(ItemTags.HOES)) return usable(s);
         if(s.is(ItemTags.LOGS)||s.is(ItemTags.PLANKS)||s.is(Items.STICK)
-            ||s.is(Items.COAL)||s.is(Items.CHARCOAL)||s.is(Items.IRON_INGOT)
+            ||s.is(Items.COAL)||s.is(Items.CHARCOAL)||s.is(Items.IRON_INGOT)||s.is(Items.COPPER_INGOT)
+            ||LockOnFood.rawMeat(s)||s.is(Items.DIRT)
             ||s.is(Items.COBBLESTONE)||s.is(Items.WHEAT_SEEDS)||s.is(Items.WHEAT)
             ||s.is(Items.BEETROOT_SEEDS)||s.is(Items.IRON_HELMET)||s.is(Items.IRON_CHESTPLATE)
             ||s.is(Items.IRON_LEGGINGS)||s.is(Items.IRON_BOOTS)||LockOnFood.edible(s)) return true;
@@ -524,21 +540,33 @@ final class LockOnBase {
         new Equipment(Items.IRON_SWORD,Items.IRON_INGOT,new int[]{2,5},new int[]{8},-1),
         new Equipment(Items.IRON_AXE,Items.IRON_INGOT,new int[]{1,2,4},new int[]{5,8},-1),
         new Equipment(Items.IRON_SHOVEL,Items.IRON_INGOT,new int[]{2},new int[]{5,8},-1),
-        new Equipment(Items.IRON_HOE,Items.IRON_INGOT,new int[]{1,2},new int[]{5,8},-1)
+        new Equipment(Items.IRON_HOE,Items.IRON_INGOT,new int[]{1,2},new int[]{5,8},-1),
+        new Equipment(Items.COPPER_SWORD,Items.COPPER_INGOT,new int[]{2,5},new int[]{8},-1),
+        new Equipment(Items.COPPER_AXE,Items.COPPER_INGOT,new int[]{1,2,4},new int[]{5,8},-1),
+        new Equipment(Items.COPPER_SHOVEL,Items.COPPER_INGOT,new int[]{2},new int[]{5,8},-1),
+        new Equipment(Items.COPPER_HOE,Items.COPPER_INGOT,new int[]{1,2},new int[]{5,8},-1)
     };
 
     private static boolean usable(ItemStack stack) {
         return !stack.isEmpty() && (!stack.isDamageableItem()
-            || stack.getMaxDamage()-stack.getDamageValue()>16);
+            || stack.getMaxDamage()-stack.getDamageValue()>0);
     }
 
     private static Equipment nextEquipment(Minecraft mc) {
         for(Equipment e:EQUIPMENT) {
+            if(e.material()==Items.COPPER_INGOT && hasTool(mc.player,ironEquivalent(e.result()))) continue;
             if(e.armorSlot()>=0 && usable(mc.player.inventoryMenu.getSlot(e.armorSlot()).getItem())) continue;
             if(!hasTool(mc.player,e.result()) && countInventory(mc.player,e.material())>=e.cells().length+3
                 && countInventory(mc.player,Items.STICK)>=e.sticks().length) return e;
         }
         return null;
+    }
+
+    private static Item ironEquivalent(Item item) {
+        if(item==Items.COPPER_SWORD) return Items.IRON_SWORD;
+        if(item==Items.COPPER_AXE) return Items.IRON_AXE;
+        if(item==Items.COPPER_SHOVEL) return Items.IRON_SHOVEL;
+        return Items.IRON_HOE;
     }
 
     static boolean equipArmor(Minecraft mc) {

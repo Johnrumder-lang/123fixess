@@ -19,6 +19,10 @@ final class SurvivalPolicy {
         return Decision.MINE;
     }
 
+    static boolean safeDrop(int blocks,double health) {
+        return blocks>=0 && blocks<=6 && Double.isFinite(health) && health-Math.max(0,blocks-3)>=6;
+    }
+
     static boolean shouldFlee(double health, boolean creeper, int threats, boolean fightEnabled) {
         return creeper || health<=10 || threats>=3 || !fightEnabled;
     }
@@ -30,7 +34,7 @@ final class SurvivalPolicy {
 
     static boolean shouldSmelt(String itemId) {
         return switch (itemId) {
-            case "minecraft:potato", "minecraft:beef", "minecraft:chicken", "minecraft:porkchop",
+            case "minecraft:rabbit", "minecraft:potato", "minecraft:beef", "minecraft:chicken", "minecraft:porkchop",
                  "minecraft:mutton", "minecraft:cod", "minecraft:salmon", "minecraft:raw_iron", "minecraft:raw_gold", "minecraft:raw_copper",
                  "minecraft:iron_ore", "minecraft:gold_ore",
                  "minecraft:copper_ore", "minecraft:deepslate_iron_ore",

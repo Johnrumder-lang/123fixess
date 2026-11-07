@@ -113,3 +113,20 @@ assert "me.onGround() && uphill" in survival
 
 assert "MiningPlan.canPlaceTower(" in survival
 assert "towerOut(mc,me)" in survival
+
+# Death screen handling must precede menu early-return; avoid premature tool replacement.
+assert client.index("LockOnSurvival.handleDeath(mc)") < client.index("mc.gui.screen() != null &&")
+assert "mc.player.respawn()" in survival
+assert "state.requiresCorrectToolForDrops()" in survival
+assert "stack.isCorrectToolForDrops(state)" in survival
+assert "case UPGRADE_COPPER" in base
+assert "Items.COPPER_PICKAXE" in base
+assert "pendingDrops.addLast" in survival
+assert "standingPosition(mc,pickupBlock)" in survival
+assert "if(!combatActive) {interruptWork(mc);combatActive=true;}" in survival
+assert "LockOnCombat.equipWeapon(mc,false)" in survival
+assert "LockOnCombat.equipWeapon(mc,target.isBlocking())" in client
+assert "LockOnCombat.opponentEating(target)" in client
+assert "LockOnMovement.combat(mc,f,b,l,r,sprint" in client
+assert "mc.options.keySprint.setDown" not in client
+print("Death recovery, harvest tier, pickup, combat and unified movement wiring: pass")

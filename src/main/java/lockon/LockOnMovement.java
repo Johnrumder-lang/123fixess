@@ -6,7 +6,7 @@ import net.minecraft.world.phys.Vec3;
 
 /** Survival movement intents, consumed after vanilla samples physical keys. */
 public final class LockOnMovement {
-    private static boolean forward;
+    private static boolean forward, backward, left, right;
     private static boolean sprint;
     private static boolean jump;
     private static long inputSamples;
@@ -18,17 +18,24 @@ public final class LockOnMovement {
     private LockOnMovement() {}
 
     static void forward(Minecraft mc, boolean wantsSprint) {
+        backward=left=right=false;
         forward=true;
         sprint=wantsSprint;
         jump=false;
     }
+
+    static void combat(Minecraft mc,boolean f,boolean b,boolean l,boolean r,boolean s,boolean j) {
+        forward=f;backward=b;left=l;right=r;sprint=s;jump=j;
+    }
+
+    static void sprint(boolean value) { sprint=value; }
 
     static void jump(Minecraft mc, boolean wantsJump) {
         jump=wantsJump;
     }
 
     static void stop(Minecraft mc) {
-        forward=false;
+        forward=backward=left=right=false;
         sprint=false;
         jump=false;
         applied=false;
@@ -41,7 +48,7 @@ public final class LockOnMovement {
     public static Input sample(Input manual) {
         Minecraft mc=Minecraft.getInstance();
         applied=false;
-        if(mc.player==null || mc.level==null || !LockOnSurvival.enabled()
+        if(mc.player==null || mc.level==null || !(LockOnSurvival.enabled() || LockOnClient.combatEnabled())
             || mc.gui.screen()!=null) {
             stop(mc);
             return manual;
@@ -51,16 +58,18 @@ public final class LockOnMovement {
             || manual.jump() || manual.shift() || manual.sprint()) {
             // The original vanilla input is returned in this SAME player tick.
             // Never write KeyMapping states: they belong to physical keyboard events.
-            LockOnSurvival.stop(mc,"Manual movement: autoplay stopped. F7 restarts it.");
+            if(LockOnSurvival.enabled()) LockOnSurvival.stop(mc,"Manual movement: autoplay stopped. F7 restarts it.");
+            if(LockOnClient.combatEnabled()) LockOnClient.manualTakeover(mc);
+            stop(mc);
             return manual;
         }
-        applied=forward || jump || sprint;
+        applied=forward || backward || left || right || jump || sprint;
         if(!applied) return manual;
-        return new Input(forward,false,false,false,jump,false,sprint);
+        return new Input(forward,backward,left,right,jump,false,sprint);
     }
 
     static void beforeClientTick(Minecraft mc) {
-        if(mc==null || mc.player==null || mc.level==null || !LockOnSurvival.enabled()
+        if(mc==null || mc.player==null || mc.level==null || !(LockOnSurvival.enabled() || LockOnClient.combatEnabled())
             || mc.gui.screen()!=null) {
             stop(mc);
             return;

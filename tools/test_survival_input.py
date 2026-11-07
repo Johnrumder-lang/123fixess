@@ -8,6 +8,15 @@ import subprocess
 import tempfile
 
 sources = {
+    'lockon/LockOnClient.java': '''
+package lockon;
+import net.minecraft.client.Minecraft;
+final class LockOnClient {
+    static boolean active;
+    static boolean combatEnabled() {return active;}
+    static void manualTakeover(Minecraft mc) {active=false;LockOnMovement.stop(mc);}
+}
+''',
     'net/minecraft/world/entity/player/Input.java': '''
 package net.minecraft.world.entity.player;
 public record Input(boolean forward,boolean backward,boolean left,boolean right,
@@ -111,6 +120,20 @@ public class MovementInputTest {
         LockOnMovement.stop(mc);
         LockOnMovement.stop(mc);
         check(LockOnMovement.sample(Input.EMPTY)==Input.EMPTY,"repeated stop clears intent");
+        LockOnSurvival.active=false;
+        LockOnClient.active=true;
+        LockOnMovement.combat(mc,true,false,true,false,true,false);
+        for(int tick=0;tick<60;tick++) {
+            Input pvp=LockOnMovement.sample(Input.EMPTY);
+            check(pvp.forward() && pvp.left() && pvp.sprint(),"sustained PvP sprint and strafe "+tick);
+        }
+        LockOnMovement.sprint(false);
+        check(!LockOnMovement.sample(Input.EMPTY).sprint(),"sprint reset preserves movement");
+        check(LockOnMovement.sample(Input.EMPTY).forward(),"reset keeps forward pressure");
+        Input manual=new Input(false,true,false,false,false,false,false);
+        check(LockOnMovement.sample(manual)==manual,"PvP respects manual backward input");
+        check(!LockOnClient.active,"manual input disables combat");
+        check(LockOnMovement.sample(Input.EMPTY)==Input.EMPTY,"no stale PvP controls");
         System.out.println("Survival input: "+passed+" behavioral checks passed");
     }
 }

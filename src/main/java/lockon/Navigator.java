@@ -24,16 +24,12 @@ final class Navigator {
     static final int MAX_RADIUS = 12;
     private static final int[] DX = {1, -1, 0, 0};
     private static final int[] DZ = {0, 0, 1, -1};
-    private static final int[] DY = {0, 1, -1};
+    private static final int[] DY = {0, 1, -1, -2, -3, -4, -5, -6};
 
     record Step(BlockPos position, BlockPos digFoot, BlockPos digHead) {
         BlockPos nextBlockToBreak(ClientLevel level) {
-            if (digFoot != null && !level.getBlockState(digFoot).getCollisionShape(level, digFoot).isEmpty()) {
-                return digFoot;
-            }
-            if (digHead != null && !level.getBlockState(digHead).getCollisionShape(level, digHead).isEmpty()) {
-                return digHead;
-            }
+            if (digHead != null && !level.getBlockState(digHead).getCollisionShape(level, digHead).isEmpty()) return digHead;
+            if (digFoot != null && !level.getBlockState(digFoot).getCollisionShape(level, digFoot).isEmpty()) return digFoot;
             return null;
         }
     }
@@ -52,15 +48,20 @@ final class Navigator {
     private Navigator() {}
 
     static Step route(ClientLevel level, LocalPlayer player, Player target, boolean mine) {
-        return route(level, player, target.getX(), target.getY(), target.getZ(), mine);
+        return route(level, player, target.getX(), target.getY(), target.getZ(), mine,0.95);
     }
 
     static Step route(ClientLevel level, LocalPlayer player,
                       double goalX, double goalY, double goalZ, boolean mine) {
+        return route(level,player,goalX,goalY,goalZ,mine,0.05);
+    }
+
+    private static Step route(ClientLevel level, LocalPlayer player,
+                      double goalX,double goalY,double goalZ,boolean mine,double tolerance) {
         BlockPos from = BlockPos.containing(player.getX(), player.getY() + 0.08, player.getZ());
         PriorityQueue<Node> open = new PriorityQueue<>(Comparator.comparingDouble(n -> n.f));
         Map<BlockPos, Double> bestCosts = new HashMap<>();
-        Node start = new Node(from, null, null, null, 0, estimate(from, goalX, goalY, goalZ));
+        Node start = new Node(from, null, null, null, 0, estimate(from, goalX, goalY, goalZ,tolerance));
         open.add(start);
         bestCosts.put(from, 0.0);
         Node best = start;
@@ -69,21 +70,29 @@ final class Navigator {
         while (!open.isEmpty() && processed++ < MAX_SEARCH) {
             Node node = open.poll();
             if (node.g > bestCosts.getOrDefault(node.pos, Double.POSITIVE_INFINITY) + 0.01) continue;
-            double distance = estimate(node.pos, goalX, goalY, goalZ);
+            double distance = estimate(node.pos, goalX, goalY, goalZ,tolerance);
             double score = distance + node.g * 0.16;
             if (score < bestScore) { bestScore = score; best = node; }
             if (distance < 0.38) { best = node; break; }
 
             for (int dir = 0; dir < DX.length; dir++) {
                 for (int change : DY) {
+                    if(change<-1 && (!LockOnSurvival.enabled()
+                        || !SurvivalPolicy.safeDrop(-change,player.getHealth()))) continue;
                     BlockPos next = node.pos.offset(DX[dir], change, DZ[dir]);
+                    if(!level.hasChunk(next.getX()>>4,next.getZ()>>4)) continue;
+                    if(change<-1) {
+                        boolean shaftClear=true;
+                        for(int y=2;y<=-change+1;y++) if(!passable(level,next.above(y))) shaftClear=false;
+                        if(!shaftClear) continue;
+                    }
                     if (Math.abs(next.getX() - from.getX()) > MAX_RADIUS
                         || Math.abs(next.getZ() - from.getZ()) > MAX_RADIUS
-                        || Math.abs(next.getY() - from.getY()) > 2) continue;
+                        || Math.abs(next.getY() - from.getY()) > 6) continue;
                     // Space over the departing node is essential for a one-block jump.
                     if (change > 0 && !passable(level, node.pos.above(2))) continue;
                     if (!supports(level, next.below())) continue;
-                    double cost = 1.0 + (change > 0 ? 0.65 : change < 0 ? 0.24 : 0);
+                    double cost = 1.0 + (change > 0 ? 0.65 : change < 0 ? -change*0.55 : 0);
                     BlockPos digFoot = null, digHead = null;
                     if (!passable(level, next)) {
                         if (!mine || !mineable(level, player, next)) continue;
@@ -98,7 +107,7 @@ final class Navigator {
                     double newCost = node.g + cost;
                     if (newCost >= bestCosts.getOrDefault(next, Double.POSITIVE_INFINITY)) continue;
                     bestCosts.put(next, newCost);
-                    double heuristic = estimate(next, goalX, goalY, goalZ);
+                    double heuristic = estimate(next, goalX, goalY, goalZ,tolerance);
                     open.add(new Node(next, node, digFoot, digHead, newCost, newCost + heuristic * 1.3));
                 }
             }
@@ -187,14 +196,14 @@ final class Navigator {
 
     static boolean passable(ClientLevel level, BlockPos pos) {
         BlockState state = level.getBlockState(pos);
-        return state.getFluidState().isEmpty() && !hazard(state)
-            && state.getCollisionShape(level, pos).isEmpty();
+        return (state.getFluidState().isEmpty() || state.getFluidState().is(net.minecraft.tags.FluidTags.WATER))
+            && !hazard(state) && state.getCollisionShape(level, pos).isEmpty();
     }
 
     private static boolean supports(ClientLevel level, BlockPos pos) {
         BlockState s = level.getBlockState(pos);
-        return s.getFluidState().isEmpty() && !hazard(s)
-            && !s.getCollisionShape(level, pos).isEmpty();
+        return !hazard(s) && (s.getFluidState().is(net.minecraft.tags.FluidTags.WATER)
+            || (s.getFluidState().isEmpty() && !s.getCollisionShape(level,pos).isEmpty()));
     }
 
     static boolean mineable(ClientLevel level, LocalPlayer player, BlockPos pos) {
@@ -218,13 +227,13 @@ final class Navigator {
             || s.is(Blocks.POWDER_SNOW) || s.is(Blocks.COBWEB);
     }
 
-    private static double estimate(BlockPos at, double x, double y, double z) {
+    private static double estimate(BlockPos at, double x, double y, double z,double tolerance) {
         // Stop near sword range, not at the opponent's exact location.
         double dx = at.getX() + 0.5 - x;
         double dz = at.getZ() + 0.5 - z;
         // Pathfinding must still make progress around obstructions even when
         // the opponent is horizontally within attack range but unreachable.
-        double horizontal = Math.max(0, Math.sqrt(dx * dx + dz * dz) - 0.95);
+        double horizontal = Math.max(0, Math.sqrt(dx * dx + dz * dz) - tolerance);
         return horizontal + Math.abs((at.getY()) - y) * 2.0;
     }
 }

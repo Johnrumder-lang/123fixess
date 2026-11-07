@@ -10,6 +10,15 @@ final class CombatTactics {
 
     private CombatTactics() {}
 
+    static boolean shouldEat(double health,int hunger) {
+        return hunger<20 && (health<=12 || hunger<=8);
+    }
+
+    static boolean shouldShield(double distance,int sinceAttack,boolean enemyEating,boolean enemyBlocking) {
+        // Release before the next charged hit. Shield startup takes five ticks.
+        return distance<4 && sinceAttack>=0 && sinceAttack<8 && !enemyEating && !enemyBlocking;
+    }
+
     static int minimumAttackTicks(boolean bareHand, boolean combo) {
         // The target has a 10-tick damage-immunity window after being hit.
         // A second packet during that window often shows animation but

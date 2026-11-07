@@ -47,6 +47,14 @@ public final class SurvivalPolicyTest {
         expect(SurvivalPolicy.shouldSmelt("minecraft:potato"));
         expect(SurvivalPolicy.shouldSmelt("minecraft:beef"));
         expect(!SurvivalPolicy.shouldSmelt("minecraft:poisonous_potato"));
+        expect(SurvivalPolicy.safeDrop(6,20));
+        expect(!SurvivalPolicy.safeDrop(6,8));
+        expect(!SurvivalPolicy.safeDrop(7,20));
+        expect(!SurvivalPolicy.safeDrop(-1,20));
+        expect(!SurvivalPolicy.safeDrop(4,Double.NaN));
+        expect(!SurvivalPolicy.shouldFlee(11,false,2,true));
+        expect(SurvivalPolicy.shouldSmelt("minecraft:rabbit"));
+        expect(SurvivalPolicy.shouldSmelt("minecraft:raw_copper"));
         System.out.println("Survival policy: " + passed + " tests passed");
     }
 }

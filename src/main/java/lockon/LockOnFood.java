@@ -23,15 +23,29 @@ import net.minecraft.world.phys.Vec3;
 final class LockOnFood {
     private static BlockPos target, replant;
     private static Item seed;
+    private static java.util.UUID preyId;
+    private static BlockPos preyPosition;
+    private static int lastHuntAttack=-100,preySince;
+    private static java.util.Map<Item,Integer> beforeHunt=java.util.Map.of();
     private static int ticks, actionTick, harvestTick;
-    static void reset() {target=replant=null;seed=null;ticks=actionTick=harvestTick=0;}
+    static void reset() {target=replant=null;preyId=null;preyPosition=null;seed=null;ticks=actionTick=harvestTick=0;lastHuntAttack=-100;}
 
     static boolean edible(ItemStack s) {
         return s.is(Items.BREAD)||s.is(Items.CARROT)||s.is(Items.POTATO)
             ||s.is(Items.BAKED_POTATO)||s.is(Items.APPLE)||s.is(Items.SWEET_BERRIES)
             ||s.is(Items.GOLDEN_CARROT)||s.is(Items.GOLDEN_APPLE)
             ||s.is(Items.COOKED_BEEF)||s.is(Items.COOKED_PORKCHOP)||s.is(Items.COOKED_MUTTON)
-            ||s.is(Items.COOKED_CHICKEN)||s.is(Items.COOKED_COD)||s.is(Items.COOKED_SALMON);
+            ||s.is(Items.COOKED_RABBIT)||s.is(Items.COOKED_CHICKEN)||s.is(Items.COOKED_COD)||s.is(Items.COOKED_SALMON);
+    }
+    static boolean rawMeat(ItemStack s) {
+        return s.is(Items.BEEF)||s.is(Items.PORKCHOP)||s.is(Items.MUTTON)||s.is(Items.CHICKEN)
+            ||s.is(Items.RABBIT)||s.is(Items.COD)||s.is(Items.SALMON);
+    }
+    static int rawCount(Minecraft mc) {
+        int count=0;
+        for(int i=0;i<36;i++) if(rawMeat(mc.player.getInventory().getItem(i)))
+            count+=mc.player.getInventory().getItem(i).getCount();
+        return count;
     }
     static int count(Minecraft mc) {
         int count=0;
@@ -47,7 +61,7 @@ final class LockOnFood {
         }
         return wheat>=3;
     }
-    static boolean pending() {return replant!=null || target!=null;}
+    static boolean pending() {return replant!=null || target!=null || preyId!=null;}
 
     static void tick(Minecraft mc) {
         ticks++;
@@ -56,9 +70,9 @@ final class LockOnFood {
         // Collect real drops before attempting to replant or consume them.
         for(Entity e:mc.level.entitiesForRendering()) {
             if(e instanceof ItemEntity item && e.distanceToSqr(mc.player)<100
-                && (edible(item.getItem()) || item.getItem().is(Items.WHEAT)
+                && (edible(item.getItem()) || rawMeat(item.getItem()) || item.getItem().is(Items.WHEAT)
                     || item.getItem().is(Items.WHEAT_SEEDS))) {
-                LockOnTravel.walk(mc,e.blockPosition());
+                LockOnTravel.walk(mc,LockOnTravel.standingPosition(mc,e.blockPosition()));
                 return;
             }
         }
@@ -94,7 +108,12 @@ final class LockOnFood {
                 if(ripe && distance<best) {target=p.immutable();best=distance;}
             }
         }
-        if(target==null) {LockOnMovement.stop(mc);return;}
+        if(target==null) {
+            if(rawCount(mc)>=8) preyId=null;
+            if(rawCount(mc)<8 && mc.player.getFoodData().getFoodLevel()<=14) hunt(mc);
+            else LockOnMovement.stop(mc);
+            return;
+        }
         if(mc.player.getEyePosition().distanceTo(Vec3.atCenterOf(target))>3.5) {
             LockOnTravel.walk(mc,target);return;
         }
@@ -117,4 +136,40 @@ final class LockOnFood {
         target=null;
         actionTick=ticks;
     }
+    private static void hunt(Minecraft mc) {
+        net.minecraft.world.entity.LivingEntity prey=null;
+        double nearest=24*24;
+        for(Entity e:mc.level.entitiesForRendering()) {
+            if(!(e instanceof net.minecraft.world.entity.LivingEntity animal) || !animal.isAlive()) continue;
+            var type=e.getType();
+            if(type!=net.minecraft.world.entity.EntityType.COW && type!=net.minecraft.world.entity.EntityType.PIG
+                &&type!=net.minecraft.world.entity.EntityType.SHEEP &&type!=net.minecraft.world.entity.EntityType.CHICKEN
+                &&type!=net.minecraft.world.entity.EntityType.RABBIT) continue;
+            if(e.hasCustomName() || (e instanceof net.minecraft.world.entity.AgeableMob ageable && ageable.isBaby())) continue;
+            if(preyId!=null) {if(preyId.equals(e.getUUID())) {prey=animal;break;}}
+            else if(e.distanceToSqr(mc.player)<nearest) {nearest=e.distanceToSqr(mc.player);prey=animal;}
+        }
+        if(prey==null) {
+            if(preyId!=null && preyPosition!=null && ticks-lastHuntAttack<40)
+                LockOnSurvival.waitForDrop(preyPosition,beforeHunt);
+            preyId=null;
+            LockOnMovement.stop(mc);
+            return;
+        }
+        if(preyId==null) {preyId=prey.getUUID();preySince=ticks;beforeHunt=LockOnSurvival.inventoryCounts(mc.player);}
+        preyPosition=prey.blockPosition();
+        if(ticks-preySince>600) {preyId=null;LockOnMovement.stop(mc);return;}
+        if(prey.distanceToSqr(mc.player)>6.25 || !mc.player.hasLineOfSight(prey)) {
+            LockOnTravel.walk(mc,prey.blockPosition());return;
+        }
+        LockOnMovement.stop(mc);
+        LockOnTravel.face(mc,prey.position().add(0,prey.getBbHeight()*0.6,0));
+        if(!LockOnCombat.equipWeapon(mc,false)) return;
+        if(ticks-lastHuntAttack<12 || mc.player.getAttackStrengthScale(0)<0.95f) return;
+        mc.gameMode.attack(mc.player,prey);
+        mc.player.swing(InteractionHand.MAIN_HAND,mc.player.getMainHandItem().getAttackAnimation(),false);
+        mc.player.connection.send(net.minecraft.network.protocol.game.ServerboundPunchPacket.INSTANCE);
+        lastHuntAttack=ticks;
+    }
+
 }
