@@ -43,6 +43,14 @@ final class LockOnTravel {
             LockOnMovement.stop(mc);
             return true;
         }
+        // The shared combat planner stops at melee range. Finish the last
+        // short, supported approach so collection and home arrival can complete.
+        if(Math.hypot(dx,dz)<1.6 && Math.abs(target.getY()-mc.player.getY())<0.5
+            && Navigator.safeForward(mc.level,mc.player,dx,dz)) {
+            face(mc,new Vec3(target.getX()+0.5,mc.player.getEyeY(),target.getZ()+0.5));
+            LockOnMovement.forward(mc,false);
+            return false;
+        }
         if(openGate(mc)) {LockOnMovement.stop(mc);return false;}
         Navigator.Step step=Navigator.route(mc.level,mc.player,target.getX()+0.5,
             target.getY(),target.getZ()+0.5,false);
