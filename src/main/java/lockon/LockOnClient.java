@@ -109,6 +109,7 @@ public final class LockOnClient implements ClientModInitializer {
         statsKey = key("key.lockon.stats", InputConstants.KEY_U);
         manualMineKey = key("key.lockon.mine_target", InputConstants.KEY_N);
         survivalKey = key("key.lockon.survival", InputConstants.KEY_F7);
+        ClientTickEvents.START_CLIENT_TICK.register(LockOnMovement::beforeClientTick);
         ClientTickEvents.END_CLIENT_TICK.register(LockOnClient::tick);
         // Attack packets belong in client gameplay ticks, not in HUD render frames.
         // Rendering can run between vanilla movement packets, so a visual
@@ -193,7 +194,8 @@ public final class LockOnClient implements ClientModInitializer {
         if (LockOnSurvival.enabled()) {
             while (statsKey.consumeClick()) {
                 String status = "Survival: " + LockOnSurvival.status()
-                    + " | Base: " + LockOnBase.status();
+                    + " | Base: " + LockOnBase.status()
+                    + " | " + LockOnMovement.diagnostic(mc);
                 hint(mc, status);
                 // U also sends it to chat so long troubleshooting messages
                 // are not cut off by Minecraft's one-line action bar.

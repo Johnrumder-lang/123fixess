@@ -19,6 +19,10 @@ public final class SurvivalPolicyTest {
             == SurvivalPolicy.Decision.EAT);
         expect(SurvivalPolicy.decide(20,20,false,false,false,true,20,0,32)
             == SurvivalPolicy.Decision.DEFEND);
+        expect(SurvivalPolicy.decide(20,6,false,false,false,true,20,0,32)
+            == SurvivalPolicy.Decision.DEFEND);
+        expect(SurvivalPolicy.decide(20,14,false,false,false,false,20,0,32)
+            == SurvivalPolicy.Decision.MINE);
         expect(SurvivalPolicy.decide(20,20,false,false,false,false,2,0,32)
             == SurvivalPolicy.Decision.RETURN_BASE);
         expect(SurvivalPolicy.decide(20,20,false,false,false,false,20,32,32)

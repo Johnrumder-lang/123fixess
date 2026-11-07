@@ -46,6 +46,9 @@ public final class LockOnSurvival {
     private static int ticks;
     private static int startTick;
     private static int lastMobHit = -1000;
+    private static java.util.UUID mobTargetId;
+    private static int mobAimSince = -1000;
+    private static int mobWeaponChanged = -1000;
     private static BlockPos miningBlock;
     private static BlockPos aimedBlock;
     private static int aimedSince;
@@ -149,10 +152,46 @@ public final class LockOnSurvival {
             me.sendOverlayMessage(Component.literal(
                 "[LockOn F7 ACTIVE #" + ticks + "] " + phase + ": " + operation));
         }
+        if (LockOnMovement.stuck()) {
+            pause(mc,"Movement request received but character hasn't moved for 70 ticks. "
+                + "Check collision, server restrictions and the U input diagnostics.");
+            return;
+        }
         // The only screen this bot is allowed to automate is its OWN chest,
         // furnace or crafting-table session. Never interact with other GUIs.
         if (mc.gui.screen() != null && !managingContainer()) {
             release(mc);
+            return;
+        }
+
+        if (me.getAirSupply() < 75) {
+            cancelDig(mc);
+            release(mc);
+            LockOnMovement.jump(mc,true);
+            reason = "low air: swimming upward / paused";
+            return;
+        }
+        if (me.isOnFire() || me.isInLava() || me.isInWall()
+            || me.fallDistance > 2.0f) {
+            pause(mc, "DANGER: fire/lava/suffocation/fall risk; disabled");
+            return;
+        }
+
+        Monster hostile = findHostile(mc, me);
+        boolean enemyNear = hostile != null && hostile.distanceToSqr(me) < 36.0;
+        // A hunger check MUST NOT mask immediate hostile defense. Previous
+        // code ran EAT -> PAUSED before DEFEND and ignored monsters while
+        // crafting or near the home base. Never run ordinary crafting work
+        // when a hostile entity has reached melee approach distance.
+        if (enemyNear && LockOnSettings.survivalFightMobs()
+            && me.getHealth() > 9.0f) {
+            if (phase == Phase.BASE && mc.gui.screen() != null) {
+                LockOnBase.stop(mc);
+                phase = Phase.PAUSED;
+                reason = "Hostile mob near the base: closed container to defend";
+            }
+            cancelDig(mc);
+            fightHostile(mc, me, hostile);
             return;
         }
         if (phase == Phase.BASE) {
@@ -167,11 +206,11 @@ public final class LockOnSurvival {
                         phase = Phase.BOOTSTRAP;
                         LockOnBootstrap.reset(mc, base, baseFacing);
                         reason = "No pickaxe: returning to wood/sticks/tool crafting";
-                        notice(me, "No usable pickaxe. Crafting a new one BEFORE mining.");
+                        notice(me,"No usable pickaxe. Crafting a new one BEFORE mining.");
                     } else {
                         reason = "Tool checked; starting mining cycle " + (cycles + 1);
                         phase = Phase.TUNNEL;
-                        notice(me, "Base processed; starting next tunnel with pickaxe.");
+                        notice(me,"Base processed; starting next tunnel with pickaxe.");
                     }
                 } else {
                     stop(mc,"Mining and base processing complete. "+status());
@@ -179,22 +218,6 @@ public final class LockOnSurvival {
             }
             return;
         }
-
-        if (me.getAirSupply() < 75) {
-            cancelDig(mc);
-            release(mc);
-            mc.options.keyJump.setDown(true);
-            reason = "low air: swimming upward / paused";
-            return;
-        }
-        if (me.isOnFire() || me.isInLava() || me.isInWall()
-            || me.fallDistance > 2.0f) {
-            pause(mc, "DANGER: fire/lava/suffocation/fall risk; disabled");
-            return;
-        }
-
-        Monster hostile = findHostile(mc, me);
-        boolean enemyNear = hostile != null && hostile.distanceToSqr(me) < 36.0;
         int free = freeSlots(me);
         SurvivalPolicy.Decision decision = SurvivalPolicy.decide(
             me.getHealth(), me.getFoodData().getFoodLevel(),
@@ -224,12 +247,6 @@ public final class LockOnSurvival {
         }
         if (eating) stopEating(mc);
         if (phase == Phase.PAUSED) { release(mc); return; }
-
-        if (enemyNear && LockOnSettings.survivalFightMobs()) {
-            cancelDig(mc);
-            fightHostile(mc, me, hostile);
-            return;
-        }
 
         if (phase == Phase.BOOTSTRAP) {
             if (LockOnBootstrap.tick(mc)) {
@@ -570,36 +587,64 @@ public final class LockOnSurvival {
 
     private static void fightHostile(Minecraft mc, LocalPlayer me, Monster enemy) {
         if (enemy == null) return;
-        if (enemy instanceof Creeper && enemy.distanceToSqr(me)<15.0) {
+        String kind = enemy.getName().getString();
+        double dist = me.distanceTo(enemy);
+        reason = "Defending against " + kind + " at "
+            + (int) Math.ceil(dist) + " blocks";
+        if (enemy instanceof Creeper && dist < 4.0) {
             release(mc);
-            // Avoid pursuing a live creeper into its explosion radius.
-            reason = "creeper nearby: retreat";
+            reason = "Creeper close: avoid rushing into explosion radius";
             phase = Phase.RETURN;
             return;
         }
-        face(me, enemy.position().add(0,enemy.getBbHeight()*0.65,0));
-        double dist=me.distanceTo(enemy);
+        if (!enemy.getUUID().equals(mobTargetId)) {
+            mobTargetId=enemy.getUUID();
+            mobAimSince=ticks;
+        }
+        face(me, enemy.position().add(0,enemy.getBbHeight()*0.68,0));
         release(mc);
-        if(dist>2.6){
-            if(dist<5.0 && me.getHealth()>13.0
+        if (dist > 2.85) {
+            if (dist < 6.4 && me.getHealth() > 10.0
                 && Navigator.safeForward(mc.level, me,
-                    enemy.getX()-me.getX(),enemy.getZ()-me.getZ()))
-                moveForward(mc,true);
+                    enemy.getX()-me.getX(),enemy.getZ()-me.getZ())) {
+                moveForward(mc,false);
+                reason = "Chasing hostile " + kind + " (" + (int) dist + "m)";
+            } else {
+                reason = "Hostile " + kind + " detected; path not safe";
+            }
             return;
         }
-        if(ticks-lastMobHit<12 || me.getAttackStrengthScale(0.0f)<0.95f) return;
-        if(!me.hasLineOfSight(enemy))return;
-        // Use a sword if available, otherwise the equipped item. This is
-        // hostile-only defense and never deliberately attacks players/animals.
+        // Looking toward the target and switching tools are client inputs;
+        // let at least two movement updates reach the server before punching.
+        if (ticks-mobAimSince<2) return;
+        if (ticks-lastMobHit<12 || me.getAttackStrengthScale(0.0f)<0.95f) {
+            reason = "Hostile within reach: waiting for hit cooldown";
+            return;
+        }
+        if (!me.hasLineOfSight(enemy)) {
+            reason = "Hostile in range but line of sight blocked";
+            return;
+        }
         int sword=-1;
-        for(int i=0;i<9;i++)
-            if(me.getInventory().getItem(i).is(ItemTags.SWORDS)){sword=i;break;}
-        if(sword>=0)me.getInventory().setSelectedSlot(sword);
+        for (int i=0;i<9;i++)
+            if (me.getInventory().getItem(i).is(ItemTags.SWORDS)) {
+                sword=i;break;
+            }
+        if (sword>=0 && me.getInventory().getSelectedSlot()!=sword) {
+            me.getInventory().setSelectedSlot(sword);
+            mobWeaponChanged=ticks;
+            reason = "Equipping sword for hostile defense";
+            return;
+        }
+        if (ticks-mobWeaponChanged<2) return;
+        if (mc.gameMode == null) return;
         mc.gameMode.attack(me,enemy);
-        me.swing(InteractionHand.MAIN_HAND,me.getMainHandItem().getAttackAnimation(),false);
+        me.swing(InteractionHand.MAIN_HAND,
+            me.getMainHandItem().getAttackAnimation(),false);
         me.connection.send(ServerboundPunchPacket.INSTANCE);
         mobsAttacked++;
         lastMobHit=ticks;
+        reason = "Sent normal melee attack to hostile " + kind;
     }
 
     private static boolean tryEat(Minecraft mc, LocalPlayer me) {
@@ -682,7 +727,7 @@ public final class LockOnSurvival {
         face(me,new Vec3(destination.getX()+0.5,me.getEyeY(),
             destination.getZ()+0.5));
         moveForward(mc,false);
-        mc.options.keyJump.setDown(uphill);
+        LockOnMovement.jump(mc,uphill);
     }
 
     private static void face(LocalPlayer me,Vec3 target) {
@@ -693,21 +738,11 @@ public final class LockOnSurvival {
     }
 
     private static void moveForward(Minecraft mc,boolean sprint) {
-        mc.options.keyUp.setDown(true);
-        mc.options.keyDown.setDown(false);
-        mc.options.keyLeft.setDown(false);
-        mc.options.keyRight.setDown(false);
-        mc.options.keySprint.setDown(sprint);
-        mc.options.keyJump.setDown(false);
+        LockOnMovement.forward(mc,sprint);
     }
 
     private static void release(Minecraft mc) {
-        mc.options.keyUp.setDown(false);
-        mc.options.keyDown.setDown(false);
-        mc.options.keyLeft.setDown(false);
-        mc.options.keyRight.setDown(false);
-        mc.options.keySprint.setDown(false);
-        mc.options.keyJump.setDown(false);
+        LockOnMovement.stop(mc);
     }
 
     private static void pause(Minecraft mc,String why) {

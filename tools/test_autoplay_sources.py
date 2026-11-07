@@ -70,8 +70,21 @@ assert '"key.keyboard.p".equals(survivalKey.saveString())' in client
 assert '"key.keyboard.o".equals(settingsKey.saveString())' in client
 assert 'KeyMapping.resetMapping();' in client
 assert 'mc.options.save();' in client
-assert '"F7 ACTIVE #"' in survival
+assert 'F7 ACTIVE #' in survival
 assert 'player.sendSystemMessage(line)' in survival
 assert 'mc.player.sendSystemMessage(Component.literal("[LockOn] " + status))' in client
+# Keep real keyDown state active across the exact Minecraft 26.3
+# player input sampling stage, and let combat interrupt crafting/hunger.
+movement=(root/"LockOnMovement.java").read_text()
+assert "ClientTickEvents.START_CLIENT_TICK.register(LockOnMovement::beforeClientTick)" in client
+assert "LockOnMovement.forward(mc,false)" in bootstrap
+assert "LockOnMovement.forward(mc,sprint)" in survival
+assert "mc.options.keyUp.setDown(forward)" in movement
+assert "movement requested=" in movement
+assert "LockOnMovement.diagnostic(mc)" in client
+assert "LockOnMovement.stuck()" in survival
+assert survival.index("if (enemyNear && LockOnSettings.survivalFightMobs()") < survival.index("SurvivalPolicy.Decision decision")
+assert "Sent normal melee attack to hostile" in survival
+print("Movement controller and urgent hostile defense order checks: pass")
 print("F7/F6 default key collision and saved-key migration checks: pass")
 print("Survival wood-to-tools progression, repeat and no-special-commands: pass")

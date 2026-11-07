@@ -774,21 +774,10 @@ final class LockOnBootstrap {
     }
 
     private static void moveForward(Minecraft mc){
-        mc.options.keyUp.setDown(true);
-        mc.options.keyDown.setDown(false);
-        mc.options.keyLeft.setDown(false);
-        mc.options.keyRight.setDown(false);
-        mc.options.keySprint.setDown(false);
-        mc.options.keyJump.setDown(false);
+        LockOnMovement.forward(mc,false);
     }
 
     private static void release(Minecraft mc){
-        if(mc==null)return;
-        mc.options.keyUp.setDown(false);
-        mc.options.keyDown.setDown(false);
-        mc.options.keyLeft.setDown(false);
-        mc.options.keyRight.setDown(false);
-        mc.options.keySprint.setDown(false);
-        mc.options.keyJump.setDown(false);
+        LockOnMovement.stop(mc);
     }
 }

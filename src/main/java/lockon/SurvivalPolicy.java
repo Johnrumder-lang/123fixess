@@ -11,8 +11,10 @@ final class SurvivalPolicy {
                            int freeSlots, int distance, int maxDistance) {
         if (!Double.isFinite(health) || health <= 0.0 || inLava || suffocating) return Decision.STOP;
         if (burning || health <= 9.0) return Decision.RETREAT;
-        if (food <= 14) return Decision.EAT;
+        // Immediate hostile threats outrank routine hunger. A slightly
+        // hungry beginner must be able to collect wood before eating.
         if (hostileClose) return Decision.DEFEND;
+        if (food <= 8) return Decision.EAT;
         if (freeSlots <= 3 || distance >= maxDistance) return Decision.RETURN_BASE;
         return Decision.MINE;
     }

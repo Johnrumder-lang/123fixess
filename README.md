@@ -1,53 +1,31 @@
-# LockOn v3.3.0 — critical autoplay activation fix (Minecraft Java 26.3)
+# LockOn v3.4.0 — survival automation input and mob-defense fixes
 
-Client-side Minecraft 26.3 / Fabric mod. Requires Java 25, Fabric Loader 0.20.1, Fabric API 0.165.2+26.3, Cloth Config API 26.3.159.
+For Minecraft Java 26.3 Fabric, with Java 25, Fabric Loader 0.20.1, Fabric API 0.165.2+26.3, Cloth Config API 26.3.159.
 
-## FIX: Pressing P did nothing
+## Why it displayed tasks but didn't act
 
-**Identified root cause:** LockOn v2.9–v3.2 used **P** to toggle autonomous Survival mode, but Minecraft Java 26.3 **already uses P for its Social Interactions screen**. The vanilla game can open that screen before LockOn's end-of-tick handler runs. LockOn then intentionally discards key presses while a normal screen is open, so the bot never starts. Similarly, Minecraft 26.3 uses **O** for its Friends screen, conflicting with LockOn settings.
+In earlier builds, a status message only meant the **task-selection code was running**. It did not show whether the movement keys actually reached Minecraft's player-input tick, whether a collision prevented movement, or whether the bot had already paused for hunger.
 
-**The defaults and existing saved mappings are both fixed:**
-- **F7 = Start/stop autonomous Survival mode** (was P).
-- **F6 = Open LockOn settings** (was O).
-- Old F7/F6 key conflicts from other mods are possible: change these under **Options → Controls → Key Binds → LockOn**.
-- The mod **automatically migrates persisted P/O mappings** from older LockOn installs to F7/F6 and saves them. Merely changing the default would not repair players' old `options.txt` mappings.
-- When you press F7, the mod **writes a start/stop message to chat**, not just the easily-overwritten action bar. While active, the action bar shows an **`[LockOn F7 ACTIVE #ticks] PHASE: current task`** message every second; this proves the gameplay tick is actually running.
-- While active press **U** to print a long diagnostic into chat that shows current phase, last reason, wood/pickaxe progression and home-base processing.
+New in this release:
+- **F7** toggles autoplay, and **F6** opens settings, avoiding the vanilla P/O social-screen key conflicts. Existing saved P/O LockOn bindings are migrated to F7/F6. Press **U** for detailed chat diagnostics.
+- **Persistent movement control:** Forward, jump, and sprint decisions are replayed in the Fabric `START_CLIENT_TICK` event, **before the player samples keys**, as well as at the end of the bot's decision tick. This is normal keyboard movement, not teleportation or a server exploit.
+- **Movement feedback:** **U** now prints `movement requested=true/false`, `keyDown=true/false`, the observed per-tick distance moved, and how many ticks movement has remained stuck. If the bot keeps asking to walk but makes no progress after about 70 ticks, it stops with an explicit explanation.
+- **Hostile-mob defense runs before routine crafting/hunger:** Earlier code could pause due to modest hunger or go into base-menu processing before attempting combat, even with a zombie nearby. Monsters now interrupt routine work when health allows. The bot aims and waits for rotation to reach the server, equips its sword when available, and performs normal Minecraft attack + punch packet actions. Creepers are not intentionally approached at close range.
+- **Hunger safety tuned:** It no longer stops all resource collection merely because the player has 14 food points (seven hunger icons). It only demands food when food is much lower.
+- **Wood and tools progression retained:** Search nearby natural trees, chop logs, collect dropped wood, convert planks, craft a workbench, sticks, and a wooden pickaxe before starting tunnels; then acquire cobblestone and attempt a furnace, smelting and upgrades. Every stage still depends on actual resources and normal server block/recipe permissions.
 
-## Expected behavior after pressing F7
+## Testing the bot
 
-Start in Survival on flat ground with a natural tree within 13 blocks, a clear area for a crafting table, and enough health/hunger.
+1. **Delete all older LockOn JARs** and put only `LockOn-26.3-v3.4.0.jar` in your Minecraft 26.3 Fabric instance's `mods/` folder.
+2. Start on flat land in Survival next to a natural tree, with at least 10 food points and preferably full health. Keep the game screen visible.
+3. Press **F7**, not P. You should see a start message in chat and an **`[LockOn F7 ACTIVE #ticks]`** heartbeat every second.
+4. Press **U**. The new debug line shows `Survival: BOOTSTRAP ...` as well as `movement requested`, `keyDown`, `moved`, and `stagnant`. This reveals whether the failure is input, pathfinding, wood visibility, recipe interaction, or hunger.
+5. Try the same test with a consenting private Survival world. Disable autoplay with **F7** immediately if it approaches a dangerous area.
 
-1. F7 should **immediately show in chat** that autonomous Survival mode started.
-2. You should get the one-second heartbeat with **BOOTSTRAP**: looking for a log, walking toward one, punching a tree, picking up the drop, or crafting.
-3. Wood is converted to planks as needed, then a crafting table, sticks and a wooden pickaxe are crafted using regular Survival inventory/container actions.
-4. The bot attempts to mine, return to its simple base, store/smelt and repeat while safe. It won't receive server-only data or bypass protected chunks and claims.
+If F7 produces no start message, check Minecraft **Options → Controls → Key Binds** for a conflicting F7 assignment. If the heartbeat is visible but the bot doesn't move, send the **entire U chat line**; the input values tell us whether Minecraft applied its movement keys.
 
-**This is still experimental autonomous gameplay**, not a fully reliable self-playing agent. Its status is designed to show whether it is running and where it gets stuck. Compilation/tests do NOT prove the in-game crafting or movement works.
+This is still an experimental client-side gameplay bot, **not an independently verified self-playing Minecraft agent**. Compilation and deterministic unit/source tests alone cannot establish working live GUI crafting, pathfinding, navigation or hostile combat; it can still become stuck or die. Never assume it can safely play unattended.
 
-### If you still see no movement
+Survival automation **does not require OP, commands, or the Paper server plugin**. All actions use ordinary Survival player permissions. The separately packaged optional Paper companion is only for administrator-controlled, opt-in distant-player tracers.
 
-- Confirm you have installed **only one LockOn client JAR** (v3.3.0).
-- Use **F7, not P**. If F7 fails, inspect Minecraft **Options → Controls → Key Binds**, search for LockOn survival, and check for other mods also using F7.
-- Press **U** after F7 and look for the `[LockOn] Survival: ...` line in chat. If there is no heartbeat or chat line, the keybind/instance is still wrong; if there is a heartbeat, that phase tells us why progression is stalled.
-- If F6 fails to show settings, rebind that too. **P** now remains available for Minecraft's own Social Interactions screen and **O** for Friends.
-
-Autoplay uses normal player actions without OP permission or server plugins. The optional Paper server plugin is for separately permissioned whole-server player tracers ONLY.
-
-## Controls
-
-| Key | Action |
-|---|---|
-| **F7** | Start/stop Survival Autoplay **(changed from P)** |
-| **F6** | LockOn settings **(changed from O)** |
-| U | Send detailed diagnostics to chat |
-| R / G | Combat LockOn and player selection |
-| H / J / K | Movement / critical jumps / combo mode |
-| B / N | Manual permissioned block-breaking toggle / aimed block |
-| P / O | Vanilla Minecraft social/friends screens — no longer used by LockOn |
-
-## Installation
-
-Download `LockOn-26.3-v3.3.0.jar` from the project's `lockon-fixed` branch after the [CI build](https://github.com/Johnrumder-lang/123fixess/actions/workflows/build.yml) succeeds. Delete every older LockOn JAR from your Fabric 26.3 `mods/` folder. Fabric API and Cloth Config remain required. The separate optional Paper companion is only needed for opt-in global player tracers.
-
-This release includes a source-level regression test for the P/O conflicts and persisted-key migration in addition to the existing offline crafting and mining policy checks.
+[GitHub Actions build](https://github.com/Johnrumder-lang/123fixess/actions/workflows/build.yml).
