@@ -210,9 +210,8 @@ public final class LockOnSurvival {
             return;
         }
         if(LockOnMovement.stuck()) {
-            release(mc);
-            reason="Replanning blocked movement";
-            if(phase==Phase.TUNNEL) phase=Phase.RETURN;
+            stop(mc,"Movement made no progress for 70 ticks. Autoplay stopped; manual controls available.");
+            return;
         }
         if(LockOnTravel.openGate(mc)) {release(mc);return;}
         if(!managingContainer() && !LockOnBootstrap.busyCrafting()

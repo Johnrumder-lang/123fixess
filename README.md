@@ -1,10 +1,14 @@
-# LockOn v3.5.0 — continuous survival work
+# LockOn v3.5.1 — movement input repair
 
 Minecraft Java 26.3, Fabric Loader 0.20.1, Fabric API 0.165.2+26.3, Cloth Config 26.3.159, Java 25.
 
-Replace older LockOn JARs with `LockOn-26.3-v3.5.0.jar`. F7 starts/stops survival work, F6 opens settings and U prints diagnostics. Enable automatic repeat in Survival settings.
+Replace older LockOn JARs with `LockOn-26.3-v3.5.1.jar`. F7 starts/stops survival work, F6 opens settings and U prints diagnostics. Enable automatic repeat in Survival settings.
 
-This release adds the following behavior.
+Movement repair in v3.5.1
+
+The survival controller no longer changes the keyboard bindings. Its movement intent is applied at the end of `KeyboardInput.tick`, updating both the input flags and movement vector. Physical movement input immediately stops autoplay and is preserved in the same player tick. F7 remains the start/stop key. Idle survival ticks leave keyboard input untouched. A sustained blocked movement request stops autoplay.
+
+Inherited survival features follow.
 
 - Creepers, low health and groups of three monsters trigger escape along supported terrain. After the threat clears, the bot attempts to return to the interrupted work position.
 - Nearby reachable fence gates can be opened during travel.

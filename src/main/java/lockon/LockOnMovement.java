@@ -1,100 +1,87 @@
 package lockon;
 
 import net.minecraft.client.Minecraft;
+import net.minecraft.world.entity.player.Input;
 import net.minecraft.world.phys.Vec3;
 
-/**
- * Durable, client-side movement intents for Survival mode. A tick-end
- * autonomous decision only affects the NEXT LocalPlayer input sample;
- * replaying it in START_CLIENT_TICK avoids losing it between events.
- * This uses ordinary vanilla key mappings; never moves the player via
- * position/teleport packets and never bypasses server validation.
- */
-final class LockOnMovement {
-    private static boolean owned;
+/** Survival movement intents, consumed after vanilla samples physical keys. */
+public final class LockOnMovement {
     private static boolean forward;
     private static boolean sprint;
     private static boolean jump;
     private static long inputSamples;
-    private static int movingTicks;
     private static int stagnantTicks;
     private static Vec3 lastPosition;
     private static double recentDelta;
+    private static boolean applied;
 
     private LockOnMovement() {}
 
     static void forward(Minecraft mc, boolean wantsSprint) {
-        owned=true;
         forward=true;
         sprint=wantsSprint;
         jump=false;
-        apply(mc);
     }
 
     static void jump(Minecraft mc, boolean wantsJump) {
-        owned=true;
         jump=wantsJump;
-        apply(mc);
     }
 
     static void stop(Minecraft mc) {
-        if (!owned) return;
         forward=false;
         sprint=false;
         jump=false;
+        applied=false;
         stagnantTicks=0;
-        movingTicks=0;
         lastPosition=null;
         recentDelta=0.0;
-        apply(mc);
-        owned=false;
+    }
+
+    /** Called at KeyboardInput.tick RETURN, after vanilla has read the keyboard. */
+    public static Input sample(Input manual) {
+        Minecraft mc=Minecraft.getInstance();
+        applied=false;
+        if(mc.player==null || mc.level==null || !LockOnSurvival.enabled()
+            || mc.gui.screen()!=null) {
+            stop(mc);
+            return manual;
+        }
+        inputSamples++;
+        if(manual.forward() || manual.backward() || manual.left() || manual.right()
+            || manual.jump() || manual.shift() || manual.sprint()) {
+            // The original vanilla input is returned in this SAME player tick.
+            // Never write KeyMapping states: they belong to physical keyboard events.
+            LockOnSurvival.stop(mc,"Manual movement: autoplay stopped. F7 restarts it.");
+            return manual;
+        }
+        applied=forward || jump || sprint;
+        if(!applied) return manual;
+        return new Input(forward,false,false,false,jump,false,sprint);
     }
 
     static void beforeClientTick(Minecraft mc) {
-        if (mc == null || mc.player == null || mc.level == null
-            || !LockOnSurvival.enabled()
-            || mc.gui.screen() != null) {
-            // Do not synthesize movement in menus, other worlds, or when
-            // gameplay automation is off. Release stale inputs.
+        if(mc==null || mc.player==null || mc.level==null || !LockOnSurvival.enabled()
+            || mc.gui.screen()!=null) {
             stop(mc);
             return;
         }
-        inputSamples++;
-        Vec3 now = mc.player.position();
-        if (lastPosition != null && forward) {
+        Vec3 now=mc.player.position();
+        if(lastPosition!=null && forward && applied) {
             recentDelta=Math.hypot(now.x-lastPosition.x,now.z-lastPosition.z);
-            movingTicks++;
-            if(recentDelta<0.004)stagnantTicks++;
+            if(recentDelta<0.004) stagnantTicks++;
             else stagnantTicks=0;
-        } else {
-            stagnantTicks=0;
-            movingTicks=0;
-        }
+        } else stagnantTicks=0;
         lastPosition=now;
-        apply(mc);
     }
 
     static String diagnostic(Minecraft mc) {
-        if (mc == null || mc.player == null) return "movement: no player";
-        return "movement requested=" + forward
-            + ", keyDown=" + mc.options.keyUp.isDown()
-            + ", jump=" + jump
-            + ", moved=" + String.format(java.util.Locale.ROOT,"%.3f",recentDelta)
-            + ", stagnant=" + stagnantTicks + "t"
-            + ", samples=" + inputSamples;
+        return "movement requested="+forward+", inputApplied="+applied
+            +", jump="+jump+", moved="
+            +String.format(java.util.Locale.ROOT,"%.3f",recentDelta)
+            +", stagnant="+stagnantTicks+"t, inputSamples="+inputSamples;
     }
 
     static boolean stuck() {
         return forward && stagnantTicks>70;
-    }
-
-    private static void apply(Minecraft mc) {
-        if (mc == null || mc.options == null) return;
-        mc.options.keyUp.setDown(forward);
-        mc.options.keyDown.setDown(false);
-        mc.options.keyLeft.setDown(false);
-        mc.options.keyRight.setDown(false);
-        mc.options.keySprint.setDown(sprint);
-        mc.options.keyJump.setDown(jump);
     }
 }

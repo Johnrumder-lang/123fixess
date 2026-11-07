@@ -5,12 +5,19 @@
   "name": "LockOn",
   "description": "Client-side practice LockOn with adaptive combos, bow assist and smart movement.",
   "environment": "client",
-  "entrypoints": {"client": ["lockon.LockOnClient"]},
+  "entrypoints": {
+    "client": [
+      "lockon.LockOnClient"
+    ]
+  },
   "depends": {
     "fabricloader": ">=0.20.1",
     "minecraft": "26.3",
     "java": ">=25",
     "fabric-api": "*",
     "cloth-config": ">=26.3.159"
-  }
+  },
+  "mixins": [
+    "lockon.mixins.json"
+  ]
 }

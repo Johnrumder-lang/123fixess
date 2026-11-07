@@ -79,7 +79,12 @@ movement=(root/"LockOnMovement.java").read_text()
 assert "ClientTickEvents.START_CLIENT_TICK.register(LockOnMovement::beforeClientTick)" in client
 assert "LockOnMovement.forward(mc,false)" in bootstrap
 assert "LockOnMovement.forward(mc,sprint)" in survival
-assert "mc.options.keyUp.setDown(forward)" in movement
+assert ".setDown(" not in movement
+assert "public static Input sample(Input manual)" in movement
+assert "LockOnSurvival.stop(mc," in movement
+mixin=(root/"mixin/KeyboardInputMixin.java").read_text()
+assert 'at=@At("RETURN")' in mixin
+assert "this.moveVector=new Vec2(left,forward).normalized()" in mixin
 assert "movement requested=" in movement
 assert "LockOnMovement.diagnostic(mc)" in client
 assert "LockOnMovement.stuck()" in survival
