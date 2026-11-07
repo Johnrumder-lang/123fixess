@@ -50,6 +50,7 @@ public final class LockOnClient implements ClientModInitializer {
     private static UUID targetId;
     private static ClientLevel previousLevel;
     private static KeyMapping toggleKey, selectKey, chaseKey, critKey, mineKey, modeKey, settingsKey, statsKey, manualMineKey, survivalKey;
+    private static boolean migratedConflictingKeys;
     private static UUID trackedVelocityTarget;
     private static Vec3 filteredVelocity = new Vec3(0.0, 0.0, 0.0);
     private static UUID observedHurtTarget;
@@ -102,10 +103,12 @@ public final class LockOnClient implements ClientModInitializer {
         critKey = key("key.lockon.criticals", InputConstants.KEY_J);
         mineKey = key("key.lockon.mining", InputConstants.KEY_B);
         modeKey = key("key.lockon.mode", InputConstants.KEY_K);
-        settingsKey = key("key.lockon.settings", InputConstants.KEY_O);
+        // Minecraft 26.3 binds O to Friends and P to Social Interactions.
+        // Both built-in screens consume the input before this mod sees it.
+        settingsKey = key("key.lockon.settings", InputConstants.KEY_F6);
         statsKey = key("key.lockon.stats", InputConstants.KEY_U);
         manualMineKey = key("key.lockon.mine_target", InputConstants.KEY_N);
-        survivalKey = key("key.lockon.survival", InputConstants.KEY_P);
+        survivalKey = key("key.lockon.survival", InputConstants.KEY_F7);
         ClientTickEvents.END_CLIENT_TICK.register(LockOnClient::tick);
         // Attack packets belong in client gameplay ticks, not in HUD render frames.
         // Rendering can run between vanilla movement packets, so a visual
@@ -119,6 +122,26 @@ public final class LockOnClient implements ClientModInitializer {
 
     private static void tick(Minecraft mc) {
         ticks++;
+        // Old versions registered P/O, so Minecraft may have saved those
+        // conflicting keys in options.txt. Correct the OLD persisted default
+        // on the first real client tick as well as changing the new default.
+        if (!migratedConflictingKeys && mc.options != null) {
+            migratedConflictingKeys = true;
+            boolean changed = false;
+            if (survivalKey.getKey().getValue() == InputConstants.KEY_P) {
+                survivalKey.setKey(InputConstants.Type.KEYBOARD.getOrCreate(InputConstants.KEY_F7));
+                changed = true;
+            }
+            if (settingsKey.getKey().getValue() == InputConstants.KEY_O) {
+                settingsKey.setKey(InputConstants.Type.KEYBOARD.getOrCreate(InputConstants.KEY_F6));
+                changed = true;
+            }
+            if (changed) {
+                KeyMapping.resetMapping();
+                mc.options.save();
+                System.out.println("[LockOn] Migrated conflicting P/O keys to F7/F6.");
+            }
+        }
         if (mc.level != previousLevel) {
             if (LockOnSurvival.enabled())
                 LockOnSurvival.stop(mc, "World changed: survival mode stopped");
@@ -155,6 +178,9 @@ public final class LockOnClient implements ClientModInitializer {
         }
 
         while (survivalKey.consumeClick()) {
+            hint(mc, LockOnSurvival.enabled()
+                ? "F7: stopping survival autoplay"
+                : "F7: starting survival autoplay (press U for live status)");
             if (!LockOnSurvival.enabled()) {
                 // Survival and PvP automation never take control at once.
                 enabled = false;
@@ -165,9 +191,14 @@ public final class LockOnClient implements ClientModInitializer {
             LockOnSurvival.toggle(mc);
         }
         if (LockOnSurvival.enabled()) {
-            while (statsKey.consumeClick())
-                hint(mc, "Survival: " + LockOnSurvival.status()
-                    + " | Base: " + LockOnBase.status());
+            while (statsKey.consumeClick()) {
+                String status = "Survival: " + LockOnSurvival.status()
+                    + " | Base: " + LockOnBase.status();
+                hint(mc, status);
+                // U also sends it to chat so long troubleshooting messages
+                // are not cut off by Minecraft's one-line action bar.
+                mc.gui.getChat().addMessage(Component.literal("[LockOn] " + status));
+            }
             LockOnSurvival.tick(mc);
             return;
         }

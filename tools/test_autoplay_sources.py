@@ -60,4 +60,18 @@ assert "Pickaxe missing planks or sticks: returning to wood gathering" in bootst
 assert "Recipe failed:" in bootstrap
 assert "mc.gameMode.startDestroyBlock(treeBlock,digFace)" in bootstrap
 print("Mining look-down, tool gate, tool swap and iron/furnace regression checks: pass")
+# v3.3: The previous P default collided with Minecraft's built-in
+# Social Interactions screen, and O with Friends (Java 26.3). A mod
+# must migrate existing options.txt mappings, not just register new
+# defaults (otherwise existing installs remain broken).
+assert 'survivalKey = key("key.lockon.survival", InputConstants.KEY_F7)' in client
+assert 'settingsKey = key("key.lockon.settings", InputConstants.KEY_F6)' in client
+assert 'survivalKey.getKey().getValue() == InputConstants.KEY_P' in client
+assert 'settingsKey.getKey().getValue() == InputConstants.KEY_O' in client
+assert 'KeyMapping.resetMapping();' in client
+assert 'mc.options.save();' in client
+assert '"F7 ACTIVE #" in survival
+assert 'getChat().addMessage(line)' in survival
+assert 'getChat().addMessage(Component.literal("[LockOn] " + status))' in client
+print("F7/F6 default key collision and saved-key migration checks: pass")
 print("Survival wood-to-tools progression, repeat and no-special-commands: pass")

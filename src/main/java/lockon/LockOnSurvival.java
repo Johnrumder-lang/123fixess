@@ -138,6 +138,17 @@ public final class LockOnSurvival {
             stop(mc, "Stopped: changed world, died, or no player");
             return;
         }
+        // Regular heartbeat: proves P/F7 actually started the bot and that
+        // the gameplay tick is running. Do not claim work finished when no
+        // action has succeeded; the displayed phase and current reason
+        // are live, not just the planned task.
+        if (ticks % 20 == 0) {
+            String operation = phase == Phase.BOOTSTRAP
+                ? LockOnBootstrap.status()
+                : reason;
+            me.sendOverlayMessage(Component.literal(
+                "[LockOn F7 ACTIVE #" + ticks + "] " + phase + ": " + operation));
+        }
         // The only screen this bot is allowed to automate is its OWN chest,
         // furnace or crafting-table session. Never interact with other GUIs.
         if (mc.gui.screen() != null && !managingContainer()) {
@@ -708,6 +719,10 @@ public final class LockOnSurvival {
     }
 
     private static void notice(LocalPlayer player,String message) {
-        player.sendOverlayMessage(Component.literal("[LockOn Survival] "+message));
+        Component line = Component.literal("[LockOn Survival] " + message);
+        player.sendOverlayMessage(line);
+        // Start/stop/failure notices go to chat, too: another vanilla HUD
+        // animation or screen can erase the one-line action bar instantly.
+        Minecraft.getInstance().gui.getChat().addMessage(line);
     }
 }

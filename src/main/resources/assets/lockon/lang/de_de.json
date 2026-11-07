@@ -5,9 +5,9 @@
   "key.lockon.criticals": "LockOn: Sprung-Krits",
   "key.lockon.mining": "LockOn: Hindernisse abbauen (zerstörend)",
   "key.lockon.mode": "LockOn: Präzision/Combo-Modus",
-  "key.lockon.settings": "LockOn: Einstellungen öffnen",
+  "key.lockon.settings": "LockOn: Einstellungen öffnen (F6)",
   "key.lockon.stats": "LockOn: PvP-Trainingsstatistik",
   "key.lockon.teleport": "LockOn: zum Spieler teleportieren (Serverberechtigung erforderlich)",
   "key.lockon.mine_target": "LockOn: anvisierten Block abbauen (B erforderlich)",
-  "key.lockon.survival": "LockOn: Survival-Stollenbau und Monsterabwehr (P)"
+  "key.lockon.survival": "LockOn: Survival-Autoplay (F7)"
 }

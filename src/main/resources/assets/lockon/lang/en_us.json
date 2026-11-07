@@ -5,9 +5,9 @@
   "key.lockon.criticals": "LockOn: timed jump criticals",
   "key.lockon.mining": "LockOn: allow breaking obstacles (destructive)",
   "key.lockon.mode": "LockOn: precision/combo attack mode",
-  "key.lockon.settings": "LockOn: open settings",
+  "key.lockon.settings": "LockOn: open settings (F6)",
   "key.lockon.stats": "LockOn: combat practice statistics",
   "key.lockon.teleport": "LockOn: teleport to player (server permission required)",
   "key.lockon.mine_target": "LockOn: mine aimed block (requires B)",
-  "key.lockon.survival": "LockOn: survival strip mining and hostile defense (P)"
+  "key.lockon.survival": "LockOn: survival autoplay (F7)"
 }

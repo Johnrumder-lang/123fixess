@@ -1,33 +1,53 @@
-# LockOn v3.2.0 — Minecraft Java 26.3 Fabric
+# LockOn v3.3.0 — critical autoplay activation fix (Minecraft Java 26.3)
 
-This release specifically addresses the **pickaxe-crafting freeze** and adds demand-driven wood gathering. It is a client-side automation mod for normal, permitted Survival gameplay. Requires Java 25, Fabric Loader 0.20.1, Fabric API 0.165.2+26.3, and Cloth Config API 26.3.159.
+Client-side Minecraft 26.3 / Fabric mod. Requires Java 25, Fabric Loader 0.20.1, Fabric API 0.165.2+26.3, Cloth Config API 26.3.159.
 
-## Fixes
+## FIX: Pressing P did nothing
 
-1. **Gather wood whenever the next recipe is short:** The bot no longer hoards a fixed 20 planks just to start building. With no crafting table it makes one as soon as it has four planks. If it runs out of planks for sticks or a pickaxe later, it converts remaining logs; if it has no logs, it searches for nearby natural trees again.
-2. **Open and place the workbench properly:** v3.1 sent workbench use/placement interactions without first synchronizing the player's view direction. The bot now turns toward the support or table, waits two gameplay ticks, performs an actual raycast to the exposed block face, then makes the normal Survival interaction. Missing/unreachable/protected stations produce a specific HUD reason.
-3. **Actually finish a recipe:** It tracks each crafting-grid ingredient click and whether the player is carrying an ingredient. It now verifies that the **correct output** appears and that the crafted item reaches inventory before announcing success. Planks from non-oak logs are supported.
-4. **Recover rather than freeze:** Failed recipes time out, and the bot attempts to move only its own ingredients from the grid/cursor back to inventory before recalculating what it needs. The bot also rechecks available wood/planks/sticks every second while waiting; an empty grid with missing materials returns it to wood gathering rather than a permanent "crafting pickaxe" state.
-5. **Fix chopping wood:** As with stone mining, the bot now aims at the actual exposed log face for two ticks before initiating block breaking, and continues digging that face until the log breaks. It attempts to collect dropped logs from the ground before crafting.
+**Identified root cause:** LockOn v2.9–v3.2 used **P** to toggle autonomous Survival mode, but Minecraft Java 26.3 **already uses P for its Social Interactions screen**. The vanilla game can open that screen before LockOn's end-of-tick handler runs. LockOn then intentionally discards key presses while a normal screen is open, so the bot never starts. Similarly, Minecraft 26.3 uses **O** for its Friends screen, conflicting with LockOn settings.
 
-**Important:** A GUI or server may still refuse a click; the bot doesn't bypass server protections, invent items, or claim a pickaxe until one is visible in inventory. The updated `U` diagnostics show the crafting stage and ingredient number/action, and provide a specific reason if the table or recipe is blocked.
+**The defaults and existing saved mappings are both fixed:**
+- **F7 = Start/stop autonomous Survival mode** (was P).
+- **F6 = Open LockOn settings** (was O).
+- Old F7/F6 key conflicts from other mods are possible: change these under **Options → Controls → Key Binds → LockOn**.
+- The mod **automatically migrates persisted P/O mappings** from older LockOn installs to F7/F6 and saves them. Merely changing the default would not repair players' old `options.txt` mappings.
+- When you press F7, the mod **writes a start/stop message to chat**, not just the easily-overwritten action bar. While active, the action bar shows an **`[LockOn F7 ACTIVE #ticks] PHASE: current task`** message every second; this proves the gameplay tick is actually running.
+- While active press **U** to print a long diagnostic into chat that shows current phase, last reason, wood/pickaxe progression and home-base processing.
 
-## Expected wood → tools progression
+## Expected behavior after pressing F7
 
-Press **P** in Survival near a natural tree (within about 13 blocks). It tries to punch a log, pick up the dropped log, make planks, craft and place a workbench, make sticks, craft a wooden pickaxe, and only then begin mining. When tools break or material supplies run out, it returns to the wood/tools progression instead of proceeding without them.
+Start in Survival on flat ground with a natural tree within 13 blocks, a clear area for a crafting table, and enough health/hunger.
 
-**O → Survival Mining** still controls strip length, continuous cycles, mob defense, auto-eating, smelting, chest storage and material compaction. **U** shows its current phase and any crafting/movement problem. Press **P** again to stop.
+1. F7 should **immediately show in chat** that autonomous Survival mode started.
+2. You should get the one-second heartbeat with **BOOTSTRAP**: looking for a log, walking toward one, punching a tree, picking up the drop, or crafting.
+3. Wood is converted to planks as needed, then a crafting table, sticks and a wooden pickaxe are crafted using regular Survival inventory/container actions.
+4. The bot attempts to mine, return to its simple base, store/smelt and repeat while safe. It won't receive server-only data or bypass protected chunks and claims.
 
-Iron/coal targeting, a furnace using real cobblestone and fuel, stone-tool upgrade, optional smelting/iron-pickaxe upgrade and small chest base remain experimental. This v3.2 patch targets the *early crafting freeze* first; it does not establish a fully reliable end-to-end self-playing bot.
+**This is still experimental autonomous gameplay**, not a fully reliable self-playing agent. Its status is designed to show whether it is running and where it gets stuck. Compilation/tests do NOT prove the in-game crafting or movement works.
+
+### If you still see no movement
+
+- Confirm you have installed **only one LockOn client JAR** (v3.3.0).
+- Use **F7, not P**. If F7 fails, inspect Minecraft **Options → Controls → Key Binds**, search for LockOn survival, and check for other mods also using F7.
+- Press **U** after F7 and look for the `[LockOn] Survival: ...` line in chat. If there is no heartbeat or chat line, the keybind/instance is still wrong; if there is a heartbeat, that phase tells us why progression is stalled.
+- If F6 fails to show settings, rebind that too. **P** now remains available for Minecraft's own Social Interactions screen and **O** for Friends.
+
+Autoplay uses normal player actions without OP permission or server plugins. The optional Paper server plugin is for separately permissioned whole-server player tracers ONLY.
+
+## Controls
+
+| Key | Action |
+|---|---|
+| **F7** | Start/stop Survival Autoplay **(changed from P)** |
+| **F6** | LockOn settings **(changed from O)** |
+| U | Send detailed diagnostics to chat |
+| R / G | Combat LockOn and player selection |
+| H / J / K | Movement / critical jumps / combo mode |
+| B / N | Manual permissioned block-breaking toggle / aimed block |
+| P / O | Vanilla Minecraft social/friends screens — no longer used by LockOn |
 
 ## Installation
 
-After successful CI compilation, tests and publication, remove **all** earlier LockOn JARs from the Fabric 26.3 `mods/` directory and install `LockOn-26.3-v3.2.0.jar`. Keep compatible Fabric API and Cloth Config.
+Download `LockOn-26.3-v3.3.0.jar` from the project's `lockon-fixed` branch after the [CI build](https://github.com/Johnrumder-lang/123fixess/actions/workflows/build.yml) succeeds. Delete every older LockOn JAR from your Fabric 26.3 `mods/` folder. Fabric API and Cloth Config remain required. The separate optional Paper companion is only needed for opt-in global player tracers.
 
-**You do not need server OP or the Paper plugin for survival automation**; all actions are ordinary Survival interactions and respect the server's protections and policies. The optional Paper plugin is only for the separately authorized player-position tracer.
-
-### Testing
-
-Start on flat terrain next to a tree with sufficient health/food. Try from an empty inventory, **P**, then repeatedly **U**. Watch for `Looking down to place crafting table`, `Opening crafting-table GUI`, `Crafting wooden_pickaxe: ingredient X/5`, and `Collecting crafted wooden_pickaxe`. If one of those doesn't progress, report the **exact U status** and what is physically on screen.
-
-Build and deterministic source tests cannot simulate a live Minecraft server, so in-game crafting and navigation must still be verified.
+This release includes a source-level regression test for the P/O conflicts and persisted-key migration in addition to the existing offline crafting and mining policy checks.
