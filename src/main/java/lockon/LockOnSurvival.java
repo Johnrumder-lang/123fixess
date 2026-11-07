@@ -52,7 +52,6 @@ public final class LockOnSurvival {
     private static boolean reachedDeath;
     private static java.util.UUID mobTargetId;
     private static int mobAimSince = -1000;
-    private static int mobWeaponChanged = -1000;
     private static BlockPos miningBlock;
     private static BlockPos aimedBlock;
     private static BlockPos pickupBlock;
@@ -156,6 +155,7 @@ public final class LockOnSurvival {
     }
 
     public static void stop(Minecraft mc, String message) {
+        stopEating(mc);
         cancelDig(mc);
         release(mc);
         LockOnBase.stop(mc);
@@ -185,6 +185,8 @@ public final class LockOnSurvival {
                 deathDimension=mc.level.dimension();
                 deathTicks=recoveryTicks=deathQuietTicks=0;
                 reachedDeath=false;
+                stopEating(mc);
+                combatActive=false;
                 LockOnCombat.stopUse(mc);
                 deathPickupPoint=null;
                 cancelDig(mc);
@@ -793,7 +795,7 @@ public final class LockOnSurvival {
         LockOnMovement.combat(mc,move.forward(),false,false,false,
             move.sprint() && me.getFoodData().getFoodLevel()>6,me.isInWater());
         if(ticks-lastMobHit==1) me.setSprinting(false);
-        reason="Defending against "+kind+": approaching / charging";
+        reason="Defending against "+kind+": weapon charge "+(int)(me.getAttackStrengthScale(0.0f)*100)+"%";
         if(!weaponReady || ticks-mobAimSince<2) return;
         LockOnCombat.shield(mc,enemy,ticks-lastMobHit);
         if(me.isUsingItem() || !CombatTactics.readyForAttack(me.getMainHandItem().isEmpty(),

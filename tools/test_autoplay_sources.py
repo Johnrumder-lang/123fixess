@@ -130,3 +130,5 @@ assert "LockOnCombat.opponentEating(target)" in client
 assert "LockOnMovement.combat(mc,f,b,l,r,sprint" in client
 assert "mc.options.keySprint.setDown" not in client
 print("Death recovery, harvest tier, pickup, combat and unified movement wiring: pass")
+
+assert "public static void stop(Minecraft mc, String message) {\n        stopEating(mc);" in survival
