@@ -723,6 +723,6 @@ public final class LockOnSurvival {
         player.sendOverlayMessage(line);
         // Start/stop/failure notices go to chat, too: another vanilla HUD
         // animation or screen can erase the one-line action bar instantly.
-        Minecraft.getInstance().gui.getChat().addMessage(line);
+        player.sendSystemMessage(line);
     }
 }

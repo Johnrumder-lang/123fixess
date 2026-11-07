@@ -66,12 +66,12 @@ print("Mining look-down, tool gate, tool swap and iron/furnace regression checks
 # defaults (otherwise existing installs remain broken).
 assert 'survivalKey = key("key.lockon.survival", InputConstants.KEY_F7)' in client
 assert 'settingsKey = key("key.lockon.settings", InputConstants.KEY_F6)' in client
-assert 'survivalKey.getKey().getValue() == InputConstants.KEY_P' in client
-assert 'settingsKey.getKey().getValue() == InputConstants.KEY_O' in client
+assert '"key.keyboard.p".equals(survivalKey.saveString())' in client
+assert '"key.keyboard.o".equals(settingsKey.saveString())' in client
 assert 'KeyMapping.resetMapping();' in client
 assert 'mc.options.save();' in client
 assert '"F7 ACTIVE #" in survival
-assert 'getChat().addMessage(line)' in survival
-assert 'getChat().addMessage(Component.literal("[LockOn] " + status))' in client
+assert 'player.sendSystemMessage(line)' in survival
+assert 'mc.player.sendSystemMessage(Component.literal("[LockOn] " + status))' in client
 print("F7/F6 default key collision and saved-key migration checks: pass")
 print("Survival wood-to-tools progression, repeat and no-special-commands: pass")

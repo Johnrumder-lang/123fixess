@@ -128,11 +128,11 @@ public final class LockOnClient implements ClientModInitializer {
         if (!migratedConflictingKeys && mc.options != null) {
             migratedConflictingKeys = true;
             boolean changed = false;
-            if (survivalKey.getKey().getValue() == InputConstants.KEY_P) {
+            if ("key.keyboard.p".equals(survivalKey.saveString())) {
                 survivalKey.setKey(InputConstants.Type.KEYBOARD.getOrCreate(InputConstants.KEY_F7));
                 changed = true;
             }
-            if (settingsKey.getKey().getValue() == InputConstants.KEY_O) {
+            if ("key.keyboard.o".equals(settingsKey.saveString())) {
                 settingsKey.setKey(InputConstants.Type.KEYBOARD.getOrCreate(InputConstants.KEY_F6));
                 changed = true;
             }
@@ -197,7 +197,7 @@ public final class LockOnClient implements ClientModInitializer {
                 hint(mc, status);
                 // U also sends it to chat so long troubleshooting messages
                 // are not cut off by Minecraft's one-line action bar.
-                mc.gui.getChat().addMessage(Component.literal("[LockOn] " + status));
+                mc.player.sendSystemMessage(Component.literal("[LockOn] " + status));
             }
             LockOnSurvival.tick(mc);
             return;
