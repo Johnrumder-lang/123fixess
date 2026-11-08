@@ -530,6 +530,7 @@ final class LockOnBootstrap {
             && mc.level.getBlockState(p).getFluidState().isEmpty()
             && mc.level.getBlockState(p.below()).isFaceSturdy(mc.level,p.below(),Direction.UP)
             && mc.level.getBlockState(p.below()).getFluidState().isEmpty()
+            && !mc.level.getBlockState(p.below()).hasBlockEntity()
             && !mc.player.getBoundingBox().intersects(new net.minecraft.world.phys.AABB(p));
     }
 

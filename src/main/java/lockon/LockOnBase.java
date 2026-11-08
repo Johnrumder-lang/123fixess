@@ -409,6 +409,7 @@ final class LockOnBase {
                 || !mc.level.getBlockState(p).getFluidState().isEmpty()
                 || !mc.level.getBlockState(p.below()).isFaceSturdy(mc.level,p.below(),Direction.UP)
                 || !mc.level.getBlockState(p.below()).getFluidState().isEmpty()
+                || mc.level.getBlockState(p.below()).hasBlockEntity()
                 || mc.player.getBoundingBox().intersects(new net.minecraft.world.phys.AABB(p))) continue;
             double score=p.distSqr(home);
             if(score<best) {best=score;site=p.immutable();}

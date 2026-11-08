@@ -161,7 +161,8 @@ public final class LockOnSurvival {
         LockOnBootstrap.reset(mc,base,baseFacing);
         LockOnMovement.begin(mc);
         notice(me, "Autoplay ON at " + base.toShortString()
-            + ": gathering wood and crafting first. F7 stops anytime.");
+            + (resuming?": resuming from existing home. F7 stops anytime.":
+                ": gathering wood and crafting first. F7 stops anytime."));
     }
 
     public static void stop(Minecraft mc, String message) {
