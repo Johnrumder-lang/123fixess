@@ -20,8 +20,8 @@ import net.minecraft.world.level.block.state.BlockState;
  * This is not a full Baritone replacement and deliberately refuses risky terrain.
  */
 final class Navigator {
-    static final int MAX_SEARCH = 420;
-    static final int MAX_RADIUS = 12;
+    static final int MAX_SEARCH = 1400;
+    static final int MAX_RADIUS = 20;
     private static final int[] DX = {1, -1, 0, 0};
     private static final int[] DZ = {0, 0, 1, -1};
     private static final int[] DY = {0, 1, -1, -2, -3, -4, -5, -6};
@@ -48,16 +48,21 @@ final class Navigator {
     private Navigator() {}
 
     static Step route(ClientLevel level, LocalPlayer player, Player target, boolean mine) {
-        return route(level, player, target.getX(), target.getY(), target.getZ(), mine,0.95);
+        return route(level, player, target.getX(), target.getY(), target.getZ(), mine,0.95,java.util.Set.of());
     }
 
     static Step route(ClientLevel level, LocalPlayer player,
                       double goalX, double goalY, double goalZ, boolean mine) {
-        return route(level,player,goalX,goalY,goalZ,mine,0.05);
+        return route(level,player,goalX,goalY,goalZ,mine,0.05,java.util.Set.of());
+    }
+
+    static Step route(ClientLevel level,LocalPlayer player,double x,double y,double z,boolean mine,
+                      java.util.Set<BlockPos> rejected) {
+        return route(level,player,x,y,z,mine,0.05,rejected);
     }
 
     private static Step route(ClientLevel level, LocalPlayer player,
-                      double goalX,double goalY,double goalZ,boolean mine,double tolerance) {
+                      double goalX,double goalY,double goalZ,boolean mine,double tolerance,java.util.Set<BlockPos> rejected) {
         BlockPos from = BlockPos.containing(player.getX(), player.getY() + 0.08, player.getZ());
         PriorityQueue<Node> open = new PriorityQueue<>(Comparator.comparingDouble(n -> n.f));
         Map<BlockPos, Double> bestCosts = new HashMap<>();
@@ -80,7 +85,7 @@ final class Navigator {
                     if(change<-1 && (!LockOnSurvival.enabled()
                         || !SurvivalPolicy.safeDrop(-change,player.getHealth()))) continue;
                     BlockPos next = node.pos.offset(DX[dir], change, DZ[dir]);
-                    if(!level.hasChunk(next.getX()>>4,next.getZ()>>4)) continue;
+                    if(rejected.contains(next) || !level.hasChunk(next.getX()>>4,next.getZ()>>4)) continue;
                     if(change<-1) {
                         boolean shaftClear=true;
                         for(int y=2;y<=-change+1;y++) if(!passable(level,next.above(y))) shaftClear=false;
@@ -189,6 +194,23 @@ final class Navigator {
             && supports(level, ahead.below());
     }
 
+    static boolean straightWalk(ClientLevel level,LocalPlayer player,double x,double y,double z) {
+        if(Math.abs(y-player.getY())>0.5) return false;
+        double dx=x-player.getX(),dz=z-player.getZ(),length=Math.hypot(dx,dz);
+        if(length<0.01) return false;
+        for(double d=0.25;d<=length+0.1;d+=0.25) {
+            double atX=player.getX()+dx*Math.min(d,length)/length;
+            double atZ=player.getZ()+dz*Math.min(d,length)/length;
+            // Check the player's width, so diagonal shortcuts cannot clip a corner.
+            for(double ox:new double[]{-0.3,0.3}) for(double oz:new double[]{-0.3,0.3}) {
+                BlockPos p=BlockPos.containing(atX+ox,player.getY()+0.08,atZ+oz);
+                if(!level.hasChunk(p.getX()>>4,p.getZ()>>4) || !passable(level,p)
+                    || !passable(level,p.above()) || !supports(level,p.below())) return false;
+            }
+        }
+        return true;
+    }
+
     static boolean safeToJump(ClientLevel level, LocalPlayer player) {
         BlockPos feet = BlockPos.containing(player.getX(), player.getY() + 0.08, player.getZ());
         return supports(level, feet.below()) && passable(level, feet.above(2));
@@ -230,7 +252,7 @@ final class Navigator {
         if (s.hasBlockEntity() || level.getBlockEntity(pos) != null) return false;
         float hardness = s.getDestroySpeed(level, pos);
         if (hardness < 0 || hardness > 3.0F) return false;
-        return s.getDestroyProgress(player, level, pos) > 0.002f;
+        return true; // Choose the actual clearing tool before starting the break.
     }
 
     private static double diggingCost(ClientLevel level, LocalPlayer player, BlockPos pos) {

@@ -16,6 +16,8 @@ final class LockOnTravel {
     private static long shoreSince, suffocationSince;
     private static boolean suffocationStarted;
     private static final java.util.Set<BlockPos> rejectedShores=new java.util.HashSet<>();
+    private static final ProgressWatch progress=new ProgressWatch();
+    private static final java.util.Map<BlockPos,Long> rejectedSteps=new java.util.HashMap<>();
     private static Vec3 lastPosition;
     private static int stagnant;
     private static long startedBreaking;
@@ -27,6 +29,7 @@ final class LockOnTravel {
         goal=waypoint=breaking=shore=null;
         rejectedShores.clear();
         gateUseTick=-100;
+        progress.reset();rejectedSteps.clear();
         lastPosition=null;
         stagnant=0;
         LockOnMovement.stop(mc);
@@ -61,7 +64,7 @@ final class LockOnTravel {
 
     static boolean walk(Minecraft mc, BlockPos target) {
         if(target==null || mc.player==null || mc.level==null || mc.gameMode==null) return false;
-        if(!target.equals(goal)) {goal=target.immutable();waypoint=null;stagnant=0;}
+        if(!target.equals(goal)) {goal=target.immutable();waypoint=null;stagnant=0;progress.reset();rejectedSteps.clear();}
         if(breaking!=null) {clearBlock(mc,breaking);return false;}
         Vec3 now=mc.player.position();
         if(lastPosition!=null && now.distanceToSqr(lastPosition)<0.0001) stagnant++;
@@ -82,23 +85,47 @@ final class LockOnTravel {
         if(waypoint!=null && mc.player.onGround()
             && Math.hypot(waypoint.getX()+0.5-now.x,waypoint.getZ()+0.5-now.z)<0.38
             && Math.abs(waypoint.getY()-now.y)<0.6) waypoint=null;
-        if(stagnant>35) {waypoint=null;stagnant=0;}
+        long time=mc.level.getGameTime();
+        rejectedSteps.entrySet().removeIf(e->time>=e.getValue());
+        if(waypoint!=null && progress.stalled(waypoint,now.distanceTo(Vec3.atBottomCenterOf(waypoint)),time)) {
+            rejectWaypoint(mc);LockOnMovement.stop(mc);
+        }
+        if(stagnant>35) {rejectWaypoint(mc);stagnant=0;}
+        if(waypoint==null && rejectedSteps.isEmpty()) {
+            double length=Math.hypot(dx,dz),reach=Math.min(3,length);
+            if(length>0.01) {
+                BlockPos direct=BlockPos.containing(now.x+dx/length*reach,now.y+0.08,now.z+dz/length*reach);
+                if(Navigator.straightWalk(mc.level,mc.player,direct.getX()+0.5,target.getY(),direct.getZ()+0.5))
+                    waypoint=direct;
+            }
+        }
         if(waypoint==null && mc.player.blockPosition().equals(target)) waypoint=target;
         if(waypoint==null) {
             Navigator.Step step=Navigator.route(mc.level,mc.player,target.getX()+0.5,
-                target.getY(),target.getZ()+0.5,true);
+                target.getY(),target.getZ()+0.5,true,rejectedSteps.keySet());
             if(step==null) {
-                // Only a real ray-hit collision can trigger obstacle clearing.
-                Vec3 end=mc.player.getEyePosition().add(new Vec3(dx,0,dz).normalize().scale(2.0));
-                BlockHitResult hit=mc.level.clip(new ClipContext(mc.player.getEyePosition(),end,
-                    ClipContext.Block.COLLIDER,ClipContext.Fluid.NONE,mc.player));
-                if(hit.getType()==HitResult.Type.BLOCK) clearBlock(mc,hit.getBlockPos());
-                else LockOnMovement.stop(mc);
+                Vec3 direction=new Vec3(dx,0,dz).normalize();
+                for(double height:new double[]{0.15,1.2}) {
+                    Vec3 start=mc.player.position().add(0,height,0),end=start.add(direction.scale(1.5));
+                    BlockHitResult hit=mc.level.clip(new ClipContext(start,end,ClipContext.Block.COLLIDER,ClipContext.Fluid.NONE,mc.player));
+                    if(hit.getType()==HitResult.Type.BLOCK && Navigator.mineable(mc.level,mc.player,hit.getBlockPos())) {
+                        clearBlock(mc,hit.getBlockPos());return false;
+                    }
+                }
+                // A stable lateral step can escape a collision at a grid corner.
+                for(int sign:new int[]{1,-1}) {
+                    double sideX=-direction.z*sign,sideZ=direction.x*sign;
+                    if(Navigator.safeForward(mc.level,mc.player,sideX,sideZ)) {
+                        waypoint=BlockPos.containing(now.x+sideX,now.y+0.08,now.z+sideZ);
+                        break;
+                    }
+                }
+                if(waypoint==null) LockOnMovement.stop(mc);
                 return false;
             }
+            waypoint=step.position().immutable();
             BlockPos obstruction=step.nextBlockToBreak(mc.level);
             if(obstruction!=null) {clearBlock(mc,obstruction);return false;}
-            waypoint=step.position().immutable();
         }
         if(!Navigator.passable(mc.level,waypoint.above())) {clearBlock(mc,waypoint.above());return false;}
         if(!Navigator.passable(mc.level,waypoint)) {clearBlock(mc,waypoint);return false;}
@@ -198,11 +225,18 @@ final class LockOnTravel {
         return column;
     }
 
+    static void clearObstacle(Minecraft mc,BlockPos block) { clearBlock(mc,block); }
+
+    private static void rejectWaypoint(Minecraft mc) {
+        if(waypoint!=null) rejectedSteps.put(waypoint,mc.level.getGameTime()+160);
+        waypoint=null;progress.reset();
+    }
+
     private static void clearBlock(Minecraft mc,BlockPos p) {
         LockOnMovement.stop(mc);
         if(mc.level.getBlockState(p).isAir()) {
             if(breaking!=null) LockOnSurvival.waitForDrop(p,beforeBreaking);
-            breaking=null;waypoint=null;
+            breaking=null;waypoint=null;progress.reset();
             mc.gameMode.stopDestroyBlock();
             return;
         }
@@ -210,11 +244,11 @@ final class LockOnTravel {
         if(!Navigator.mineable(mc.level,mc.player,p)
             || p.equals(mc.player.blockPosition().below())
             || mc.player.getEyePosition().distanceTo(Vec3.atCenterOf(p))>4.1) {
-            breaking=null;waypoint=null;return;
+            breaking=null;rejectWaypoint(mc);return;
         }
         BlockHitResult hit=mc.level.clip(new ClipContext(mc.player.getEyePosition(),Vec3.atCenterOf(p),
             ClipContext.Block.COLLIDER,ClipContext.Fluid.NONE,mc.player));
-        if(hit.getType()!=HitResult.Type.BLOCK || !hit.getBlockPos().equals(p)) {breaking=null;waypoint=null;return;}
+        if(hit.getType()!=HitResult.Type.BLOCK || !hit.getBlockPos().equals(p)) {breaking=null;rejectWaypoint(mc);return;}
         face(mc,Vec3.atCenterOf(p));
         if(breaking==null) {
             breaking=p.immutable();
@@ -224,7 +258,7 @@ final class LockOnTravel {
         }
         if(mc.level.getGameTime()-startedBreaking<3) return;
         if(mc.level.getGameTime()-startedBreaking>240) {
-            mc.gameMode.stopDestroyBlock();breaking=null;waypoint=null;return;
+            mc.gameMode.stopDestroyBlock();breaking=null;rejectWaypoint(mc);return;
         }
         mc.gameMode.continueDestroyBlock(p,hit.getDirection());
     }
@@ -237,7 +271,7 @@ final class LockOnTravel {
             if(state.requiresCorrectToolForDrops() && !stack.isCorrectToolForDrops(state)) continue;
             if(stack.getDestroySpeed(state)>speed) {best=slot;speed=stack.getDestroySpeed(state);}
         }
-        if(best<0) {breaking=null;waypoint=null;return false;}
+        if(best<0) {breaking=null;rejectWaypoint(mc);return false;}
         if(best>=9) {
             if(mc.player.containerMenu instanceof net.minecraft.world.inventory.InventoryMenu)
                 mc.gameMode.handleContainerInput(mc.player.containerMenu.containerId,best,8,

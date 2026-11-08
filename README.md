@@ -1,10 +1,18 @@
-# LockOn v3.6.1 — survival recovery and combat
+# LockOn v3.6.2 — survival recovery and combat
 
 Minecraft Java 26.3, Fabric Loader 0.20.1, Fabric API 0.165.2+26.3, Cloth Config 26.3.159, Java 25.
 
-Replace older LockOn JARs with `LockOn-26.3-v3.6.1.jar`. F7 starts/stops survival, F6 opens settings, and U prints diagnostics. Enable automatic repeat for successive mining trips. For PvP, G selects a player, R toggles combat, H toggles chase, B allows obstacle mining, and J enables optional jump criticals. Physical movement immediately gives control back to you and stops automation.
+Replace older LockOn JARs with `LockOn-26.3-v3.6.2.jar`. F7 starts/stops survival, F6 opens settings, and U prints diagnostics. Enable automatic repeat for successive mining trips. For PvP, G selects a player, R toggles combat, H toggles chase, B allows obstacle mining, and J enables optional jump criticals. Physical movement immediately gives control back to you and stops automation.
 
-## Changes in v3.6.1
+## Changes in v3.6.2
+
+- Tree destinations and their standing positions stay pinned while walking. Exploration advances along a fixed compass heading and turns only after a blocked step; it no longer cycles around home or replaces the tree target every six seconds.
+- Nearby wood is checked first. A budgeted chunk-palette scan searches a 32-chunk (512-block) radius over terrain already loaded by the client. It cannot make the server send chunks beyond its view-distance limit, and it does not change graphics/render-distance settings.
+- Travel follows straight supported stretches where possible. Progress monitoring detects oscillation, temporarily rejects failed steps, replans around them, and checks both foot-height and head-height obstructions for clearing.
+- Workbench interaction checks reachable faces and edges, not just the block center. Placement prefers visible supported space near the player and ahead of the current view, and requires a real top-face hit to place into the intended space.
+- Workbenches, sticks, wooden tools and chest recipes accept mixed plank species. Each grid cell selects from the remaining plank stacks.
+
+## Fixes retained from v3.6.1
 
 - Tables, chests and furnaces are crafted only when missing from both the world and inventory. Placement waits for confirmation, retries at most three times, and retains supplies when placement fails. Nearby existing stations are reused; placement and opening walk to a clear view and face the actual block.
 - Base crafting waits for the result to reach inventory. Container work tracks the requested station, and full/rejected chest transfers end the storage pass. Autoplay does not operate another open menu.

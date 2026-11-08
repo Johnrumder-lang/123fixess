@@ -46,10 +46,10 @@ assert "FURNACE" in base and "SMELT" in base
 assert "LockOnSurvival.waitForDrop(digTarget,woodInventoryBefore)" in bootstrap
 assert "Log broken: walking over to collect drops" in bootstrap
 # v3.2: crafting table must be faced and clicks must be validated.
-assert "lookForInteraction(player,table.below(),hit)" in bootstrap
+assert "lookForInteraction(player,table.below(),supportHit.getLocation())" in bootstrap
 assert "lookForInteraction(player,table,target)" in bootstrap
-assert "supportHit=mc.level.clip(new ClipContext(" in bootstrap
-assert "tableHit=mc.level.clip(new ClipContext(" in bootstrap
+assert "supportHit=BlockInteraction.hit(mc,player.getEyePosition(),table.below(),true)" in bootstrap
+assert "tableHit=BlockInteraction.hit(mc,player.getEyePosition(),table,false)" in bootstrap
 assert "aimedWood" in bootstrap and "woodAimTick" in bootstrap
 assert "cleanupCraftingGrid(mc)" in bootstrap
 assert "Returning unused recipe ingredients" in bootstrap
@@ -94,7 +94,7 @@ assert "Sent normal melee attack to hostile" in survival
 # on every gameplay tick and permit one-block step-up traversal.
 assert "ticks-lastWoodSearchAt>=20" in bootstrap
 assert "blockedTrees.contains(p)" in bootstrap
-assert "LockOnTravel.walk(mc,treeBlock)" in bootstrap
+assert "LockOnTravel.walk(mc,treeStand)" in bootstrap
 print("Throttled wood search and accessible-tree fallback checks: pass")
 print("Movement controller and urgent hostile defense order checks: pass")
 print("F7/F6 default key collision and saved-key migration checks: pass")
@@ -145,3 +145,12 @@ assert "lastMobHit=mobAimSince=lastToolSwapTick=-1000" in survival
 assert "boolean resuming=world==mc.level && base!=null" in survival
 assert "ticks-cleaningTicks>200" in bootstrap
 print("Station confirmation, menu ownership, restart and suffocation integration: pass")
+
+assert "ticks%120==0" not in bootstrap
+assert "distantTrees.poll(mc,blockedTrees)" in bootstrap
+assert "countTag(player,ItemTags.PLANKS)>=4" in bootstrap
+assert "new Ingredient(null,1)" in bootstrap
+assert "scoutHeading=scoutHeading.getClockWise()" in bootstrap
+assert "(scoutIndex%8)" not in bootstrap
+assert "BlockInteraction.hit(mc,eyes,block" in bootstrap
+print("Pinned tree/standing targets, mixed planks and reachable-face interaction wiring: pass")

@@ -132,6 +132,19 @@ public class NavigationTest {
   check(Navigator.shore(w,p,new BlockPos(5,2,0),java.util.Set.of())==null,"bank with blocked headroom is not a landing");
   w.put(2,3,0,"air");w.put(2,1,0,"lava");
   check(Navigator.shore(w,p,new BlockPos(5,2,0),java.util.Set.of())==null,"lava bank cannot be an escape point");
+  w=new ClientLevel();p.y=1;p.x=.5;p.z=.5;
+  for(int x=-5;x<=5;x++)for(int z=-5;z<=5;z++)w.put(x,0,z,"stone");
+  check(Navigator.straightWalk(w,p,3.5,1,3.5),"open diagonal ground supports straight travel");
+  w.put(1,1,0,"bedrock");
+  check(!Navigator.straightWalk(w,p,3.5,1,3.5),"player width cannot clip diagonal block corners");
+  w.put(1,1,0,"air");
+  w.put(1,1,1,"bedrock");
+  check(!Navigator.straightWalk(w,p,3.5,1,3.5),"direct shortcut never ignores an obstacle");
+  w.put(1,1,0,"bedrock");w.put(1,2,0,"bedrock");
+  var detour=Navigator.route(w,p,3.5,1,.5,false);
+  check(detour!=null && !detour.position().equals(new BlockPos(1,1,0)),"route goes around a blocking wall");
+  var alternative=Navigator.route(w,p,3.5,1,.5,false,java.util.Set.of(detour.position()));
+  check(alternative!=null && !alternative.position().equals(detour.position()),"failed step exclusion selects another route");
   System.out.println("Navigation block-grid: "+checks+" behavioral checks passed");
  }
 }

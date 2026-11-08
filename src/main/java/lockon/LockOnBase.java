@@ -418,11 +418,8 @@ final class LockOnBase {
     }
 
     private static net.minecraft.world.phys.BlockHitResult visibleHit(Minecraft mc,Vec3 eye,BlockPos block,Vec3 point) {
-        if(eye.distanceTo(point)>4.1) return null;
-        var hit=mc.level.clip(new net.minecraft.world.level.ClipContext(eye,point,
-            net.minecraft.world.level.ClipContext.Block.COLLIDER,
-            net.minecraft.world.level.ClipContext.Fluid.NONE,mc.player));
-        return hit.getType()==net.minecraft.world.phys.HitResult.Type.BLOCK && hit.getBlockPos().equals(block)?hit:null;
+        boolean topOnly=point.y>block.getY()+0.9;
+        return BlockInteraction.hit(mc,eye,block,topOnly);
     }
 
     private static BlockHitResult approach(Minecraft mc,BlockPos block,Vec3 point,BlockPos avoid) {
@@ -505,12 +502,12 @@ final class LockOnBase {
     }
 
     private static Item findPlank(LocalPlayer player,int amount) {
-        for(int i=0;i<36;i++){
+        int total=0;Item first=null;
+        for(int i=0;i<36;i++) {
             ItemStack item=player.getInventory().getItem(i);
-            if(item.is(ItemTags.PLANKS) && item.getCount()>=amount)
-                return item.getItem();
+            if(item.is(ItemTags.PLANKS)) {total+=item.getCount();if(first==null)first=item.getItem();}
         }
-        return null;
+        return total>=amount?first:null;
     }
 
     private static boolean hasTool(LocalPlayer player,Item item) {
@@ -711,7 +708,8 @@ final class LockOnBase {
         if(first==null && craftJob==null)return false;
         if(craftJob==null){
             java.util.List<Ingredient> ingredients=new java.util.ArrayList<>();
-            for(int i:firstSlots)ingredients.add(new Ingredient(first,i));
+            Item firstIngredient=first.getDefaultInstance().is(ItemTags.PLANKS)?null:first;
+            for(int i:firstSlots)ingredients.add(new Ingredient(firstIngredient,i));
             if(second!=null)
                 for(int i:secondSlots)ingredients.add(new Ingredient(second,i));
             for(Ingredient ing:ingredients)
@@ -733,7 +731,7 @@ final class LockOnBase {
             Ingredient ing=job.ingredients.get(job.progress);
             if(job.action==0){
                 job.source=findInventorySlot(menu,portable?9:10,
-                    stack->stack.is(ing.item()));
+                    stack->ing.item()==null?stack.is(ItemTags.PLANKS):stack.is(ing.item()));
                 if(job.source<0){
                     craftJob=null;
                     status="Missing crafting ingredient "+ing.item();

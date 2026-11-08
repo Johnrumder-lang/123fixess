@@ -36,7 +36,7 @@ final class LockOnBootstrap {
     private enum Step { WOOD, PLANKS, TABLE, STICKS, PICKAXE, READY, WAIT }
     private record Ingredient(Item item, int slot) {}
     private static Step step = Step.WOOD;
-    private static BlockPos base, table, treeBlock, digTarget;
+    private static BlockPos base, table, treeBlock, digTarget, treeStand;
     private static java.util.Map<Item,Integer> woodInventoryBefore=java.util.Map.of();
     private static ClientLevel world;
     private static Direction facing;
@@ -56,7 +56,11 @@ final class LockOnBootstrap {
     private static int stationAttempts;
     private static boolean cleaningRecipe;
     private static int cleaningTicks;
-    private static final int SEARCH_RADIUS = 32;
+    private static final int SEARCH_RADIUS = 8;
+    private static final TreeSearch distantTrees=new TreeSearch();
+    private static Direction scoutHeading;
+    private static BlockPos workbenchStand,workbenchApproach;
+    private static int workbenchApproachSince;
     private static BlockPos scoutTarget;
     private static LocalPlayer cleanupOwner;
     private static final StationPlan tablePlacement=new StationPlan();
@@ -94,8 +98,9 @@ final class LockOnBootstrap {
         tablePlacement.reset();
         table=findWorkbenchSite(mc);
         scoutTarget=null;
-        scoutIndex=0;
-        treeBlock=digTarget=null;
+        scoutIndex=0;scoutHeading=facing;distantTrees.reset();
+        workbenchStand=workbenchApproach=null;
+        treeBlock=digTarget=treeStand=null;
         aimedWood=null;
         digFace=Direction.UP;
         woodAimTick=0;
@@ -251,10 +256,10 @@ final class LockOnBootstrap {
                     placeWorkbench(mc,player);
                 } else {
                     Item plank=findItem(player,ItemTags.PLANKS);
-                    if(plank!=null && count(player,plank)>=4){
+                    if(plank!=null && countTag(player,ItemTags.PLANKS)>=4){
                         startCraft(false,Items.CRAFTING_TABLE,
-                            List.of(new Ingredient(plank,1),new Ingredient(plank,2),
-                                new Ingredient(plank,3),new Ingredient(plank,4)));
+                            List.of(new Ingredient(null,1),new Ingredient(null,2),
+                                new Ingredient(null,3),new Ingredient(null,4)));
                     } else {
                         detail="Need more wood for crafting table";
                         step=Step.WOOD;
@@ -263,14 +268,14 @@ final class LockOnBootstrap {
             }
             case STICKS -> {
                 Item plank=findItem(player,ItemTags.PLANKS);
-                if(plank!=null && count(player,plank)>=2){
+                if(plank!=null && countTag(player,ItemTags.PLANKS)>=2){
                     startCraft(false,Items.STICK,
-                        List.of(new Ingredient(plank,1),new Ingredient(plank,3)));
+                        List.of(new Ingredient(null,1),new Ingredient(null,3)));
                 } else {detail="Need more planks for sticks";step=Step.WOOD;}
             }
             case PICKAXE -> {
                 Item plank=findItem(player,ItemTags.PLANKS);
-                if(plank==null || count(player,plank)<3
+                if(plank==null || countTag(player,ItemTags.PLANKS)<3
                     || count(player,Items.STICK)<2) {
                     detail="Pickaxe missing planks or sticks: returning to wood gathering";
                     step=Step.WOOD;
@@ -278,8 +283,8 @@ final class LockOnBootstrap {
                 }
                 if(!openWorkbench(mc,player))return false;
                 startCraft(true,Items.WOODEN_PICKAXE,
-                    List.of(new Ingredient(plank,1),new Ingredient(plank,2),
-                        new Ingredient(plank,3),new Ingredient(Items.STICK,5),
+                    List.of(new Ingredient(null,1),new Ingredient(null,2),
+                        new Ingredient(null,3),new Ingredient(Items.STICK,5),
                         new Ingredient(Items.STICK,8)));
             }
             case READY -> {
@@ -292,10 +297,11 @@ final class LockOnBootstrap {
                 }
                 if(count(player,Items.STICK)<8) {
                     Item plank=findItem(player,ItemTags.PLANKS);
-                    startCraft(false,Items.STICK,List.of(new Ingredient(plank,1),new Ingredient(plank,3)));
+                    startCraft(false,Items.STICK,List.of(new Ingredient(null,1),new Ingredient(null,3)));
                     return false;
                 }
                 // Resource collection can finish far from home. Walk back before mining.
+                detail="Returning to home with wood and tools";
                 return LockOnTravel.walk(mc,base);
             }
             case WAIT -> {}
@@ -304,13 +310,16 @@ final class LockOnBootstrap {
     }
 
     private static void gatherWood(Minecraft mc,LocalPlayer player) {
-        if((treeBlock==null || mc.level.getBlockState(treeBlock).isAir() || ticks%120==0)
+        if((treeBlock==null || mc.level.getBlockState(treeBlock).isAir())
             && ticks-lastWoodSearchAt>=20) {
             lastWoodSearchAt=ticks;
+            if(ticks%200<20) blockedTrees.clear();
             treeBlock=findTree(mc,player);
+            treeStand=null;
             aimedWood=null;
             woodSearches++;
         }
+        if(treeBlock==null) treeBlock=distantTrees.poll(mc,blockedTrees);
         if(treeBlock==null){
             scoutForTree(mc);
             return;
@@ -323,13 +332,8 @@ final class LockOnBootstrap {
         if(distance>4.0 || (distance>2.25 && horizontalToTree>1.85)){
             double dx=treeBlock.getX()+0.5-player.getX();
             double dz=treeBlock.getZ()+0.5-player.getZ();
-            if(Math.abs(treeBlock.getY()-player.getY())>4.0){
-                blockedTrees.add(treeBlock);
-                treeBlock=null;
-                detail="Too-high tree trunk; selecting a closer log";
-                return;
-            }
-            LockOnTravel.walk(mc,treeBlock);
+            if(treeStand==null) treeStand=treeApproach(mc,treeBlock);
+            LockOnTravel.walk(mc,treeStand);
             detail="Walking around obstacles to tree ("+(int)distance+" blocks)";
             lastMoveTick=ticks;
             return;
@@ -345,9 +349,13 @@ final class LockOnBootstrap {
             ClipContext.Block.COLLIDER,ClipContext.Fluid.NONE,player));
         if(hit.getType()!=HitResult.Type.BLOCK
             || !hit.getBlockPos().equals(treeBlock)){
-            detail="Tree log obscured; selecting a visible trunk block";
-            blockedTrees.add(treeBlock);
-            treeBlock=null;
+            if(hit.getType()==HitResult.Type.BLOCK && Navigator.mineable(mc.level,player,hit.getBlockPos())) {
+                LockOnTravel.clearObstacle(mc,hit.getBlockPos());
+                detail="Clearing leaves/block in front of the selected tree";
+            } else {
+                blockedTrees.add(treeBlock);treeBlock=null;treeStand=null;
+                detail="Tree approach blocked; choosing another reachable log";
+            }
             return;
         }
         if(aimedWood==null || !aimedWood.equals(treeBlock)) {
@@ -373,19 +381,12 @@ final class LockOnBootstrap {
             for(int z=-SEARCH_RADIUS;z<=SEARCH_RADIUS;z++){
                 int bx=playerPos.getX()+x,bz=playerPos.getZ()+z;
                 if(!mc.level.hasChunk(bx>>4,bz>>4))continue;
-                for(int y=-2;y<=5;y++){
+                for(int y=-4;y<=12;y++){
                     BlockPos p=new BlockPos(bx,playerPos.getY()+y,bz);
                     if(blockedTrees.contains(p)
                         || !mc.level.getBlockState(p).is(BlockTags.LOGS)
                         || !naturalTree(mc.level,p))continue;
                     double physical=player.getEyePosition().distanceToSqr(Vec3.atCenterOf(p));
-                    if(physical < 4.2*4.2) {
-                        BlockHitResult hit=mc.level.clip(new ClipContext(
-                            player.getEyePosition(),Vec3.atCenterOf(p),
-                            ClipContext.Block.COLLIDER,ClipContext.Fluid.NONE,player));
-                        if(hit.getType()!=HitResult.Type.BLOCK
-                            || !hit.getBlockPos().equals(p))continue;
-                    }
                     // Prefer lower trunk pieces so mining starts at the
                     // base and the dropped log falls close to the player.
                     double d=physical+2.0*Math.max(0,p.getY()-playerPos.getY());
@@ -396,14 +397,28 @@ final class LockOnBootstrap {
         return closest;
     }
 
-    private static boolean naturalTree(ClientLevel world,BlockPos p) {
+    static boolean naturalTree(ClientLevel world,BlockPos p) {
         // Avoid stripping logs from an unrelated wooden house.
         for(int dx=-2;dx<=2;dx++)for(int dz=-2;dz<=2;dz++)
-            for(int dy=0;dy<=6;dy++){
+            for(int dy=0;dy<=16;dy++){
                 if(world.getBlockState(p.offset(dx,dy,dz)).is(BlockTags.LEAVES))
                     return true;
             }
         return false;
+    }
+
+    private static BlockPos treeApproach(Minecraft mc,BlockPos log) {
+        BlockPos best=null;double distance=Double.MAX_VALUE;
+        for(BlockPos p:BlockPos.betweenClosed(log.offset(-2,-3,-2),log.offset(2,1,2))) {
+            if(!Navigator.passable(mc.level,p) || !Navigator.passable(mc.level,p.above())
+                || !mc.level.getBlockState(p.below()).isFaceSturdy(mc.level,p.below(),Direction.UP)) continue;
+            Vec3 eye=Vec3.atBottomCenterOf(p).add(0,mc.player.getEyeHeight(),0);
+            if(eye.distanceTo(Vec3.atCenterOf(log))>3.8
+                || Math.hypot(p.getX()-log.getX(),p.getZ()-log.getZ())>1.8) continue;
+            double score=mc.player.position().distanceToSqr(Vec3.atBottomCenterOf(p));
+            if(score<distance) {distance=score;best=p.immutable();}
+        }
+        return best==null?log:best;
     }
 
     private static boolean lookForInteraction(LocalPlayer player,
@@ -424,12 +439,14 @@ final class LockOnBootstrap {
             lastLookTarget=null;
             return;
         }
-        if(table==null || !validWorkbenchSite(mc,table)) {
+        if(table==null || !validWorkbenchSite(mc,table)
+            || (!tablePlacement.attempted()
+                && BlockInteraction.hit(mc,player.getEyePosition(),table.below(),true)==null)) {
             table=findWorkbenchSite(mc);
             stationAttempts=0;
             lastLookTarget=null;
             if(table==null) {
-                detail="Searching for supported workbench space near home";
+                detail="Searching for supported workbench space nearby";
                 release(mc);
                 return;
             }
@@ -443,30 +460,13 @@ final class LockOnBootstrap {
         Vec3 supportPoint=new Vec3(table.getX()+0.5,table.getY()-0.01,table.getZ()+0.5);
         if(!approachWorkbench(mc,table.below(),supportPoint)) return;
         release(mc);
-        player.getInventory().setSelectedSlot(slot);
-        Vec3 hit=new Vec3(table.getX()+0.5,table.getY(),table.getZ()+0.5);
-        if(!lookForInteraction(player,table.below(),hit)) {
-            detail="Looking down to place crafting table";
-            return;
+        if(player.getInventory().getSelectedSlot()!=slot) {
+            player.getInventory().setSelectedSlot(slot);lastLookTarget=null;return;
         }
+        BlockHitResult supportHit=BlockInteraction.hit(mc,player.getEyePosition(),table.below(),true);
+        if(supportHit==null) {lastLookTarget=null;return;}
+        if(!lookForInteraction(player,table.below(),supportHit.getLocation())) return;
         if(ticks-lastStationUseTick<14)return;
-        if(stationAttempts>=5) {
-            rejectedSites.add(table);
-            table=findWorkbenchSite(mc);
-            stationAttempts=0;
-            lastLookTarget=null;
-            detail="Placement unconfirmed: trying another supported site";
-            return;
-        }
-        BlockHitResult supportHit=mc.level.clip(new ClipContext(
-            player.getEyePosition(),supportPoint,
-            ClipContext.Block.COLLIDER,ClipContext.Fluid.NONE,player));
-        if(supportHit.getType()!=HitResult.Type.BLOCK
-            || !supportHit.getBlockPos().equals(table.below())) {
-            lastLookTarget=null;
-            approachWorkbench(mc,table.below(),supportPoint);
-            return;
-        }
         mc.gameMode.useItemOn(player,InteractionHand.MAIN_HAND,supportHit);
         tablePlacement.sent(ticks);
         stationAttempts++;
@@ -499,21 +499,13 @@ final class LockOnBootstrap {
         }
         if(!approachWorkbench(mc,table,Vec3.atCenterOf(table))) return false;
         release(mc);
-        Vec3 target=Vec3.atCenterOf(table);
+        BlockHitResult tableHit=BlockInteraction.hit(mc,player.getEyePosition(),table,false);
+        if(tableHit==null) {lastLookTarget=null;return false;}
+        Vec3 target=tableHit.getLocation();
         if(!lookForInteraction(player,table,target)) {
-            detail="Looking at crafting table to open it";
-            return false;
+            detail="Looking at reachable workbench face";return false;
         }
         if(ticks-lastStationUseTick<12)return false;
-        BlockHitResult tableHit=mc.level.clip(new ClipContext(
-            player.getEyePosition(),target,
-            ClipContext.Block.COLLIDER,ClipContext.Fluid.NONE,player));
-        if(tableHit.getType()!=HitResult.Type.BLOCK
-            || !tableHit.getBlockPos().equals(table)) {
-            lastLookTarget=null;
-            approachWorkbench(mc,table,target);
-            return false;
-        }
         mc.gameMode.useItemOn(player,InteractionHand.MAIN_HAND,tableHit);
         openedTable=true;
         openTick=ticks;
@@ -535,29 +527,42 @@ final class LockOnBootstrap {
     }
 
     private static BlockPos findWorkbenchSite(Minecraft mc) {
-        BlockPos chosen=null;
-        double best=Double.MAX_VALUE;
-        for(BlockPos candidate:BlockPos.betweenClosed(base.offset(-4,-2,-4),base.offset(4,2,4))) {
-            if(mc.level.getBlockState(candidate).is(Blocks.CRAFTING_TABLE)) return candidate.immutable();
-            // Preserve the four mining lanes around the recorded home.
-            if(candidate.getX()==base.getX() || candidate.getZ()==base.getZ()
-                || !validWorkbenchSite(mc,candidate)) continue;
-            double distance=Vec3.atCenterOf(candidate).distanceToSqr(Vec3.atCenterOf(base));
-            if(distance<best) {best=distance;chosen=candidate.immutable();}
+        BlockPos feet=mc.player.blockPosition(),existing=null,chosen=null;
+        double nearest=Double.MAX_VALUE,best=Double.MAX_VALUE;
+        for(BlockPos p:BlockPos.betweenClosed(feet.offset(-6,-3,-6),feet.offset(6,3,6))) {
+            if(mc.level.getBlockState(p).is(Blocks.CRAFTING_TABLE)) {
+                double distance=mc.player.position().distanceToSqr(Vec3.atCenterOf(p));
+                if(distance<nearest) {nearest=distance;existing=p.immutable();}
+            }
+        }
+        if(existing!=null) return existing;
+        if(table!=null && mc.level.getBlockState(table).is(Blocks.CRAFTING_TABLE)) return table;
+        Vec3 look=mc.player.getViewVector(1);
+        for(BlockPos candidate:BlockPos.betweenClosed(feet.offset(-3,-1,-3),feet.offset(3,1,3))) {
+            if(!validWorkbenchSite(mc,candidate)) continue;
+            boolean visible=BlockInteraction.hit(mc,mc.player.getEyePosition(),candidate.below(),true)!=null;
+            double dx=candidate.getX()+0.5-mc.player.getX(),dz=candidate.getZ()+0.5-mc.player.getZ();
+            double distance=dx*dx+dz*dz;
+            double score=distance+(visible?0:100)-(dx*look.x+dz*look.z)*0.7;
+            if(score<best) {best=score;chosen=candidate.immutable();}
         }
         return chosen;
     }
 
     private static boolean clearInteraction(Minecraft mc,Vec3 eyes,BlockPos block,Vec3 point) {
-        if(eyes.distanceTo(point)>4.0) return false;
-        BlockHitResult hit=mc.level.clip(new ClipContext(eyes,point,
-            ClipContext.Block.COLLIDER,ClipContext.Fluid.NONE,mc.player));
-        return hit.getType()==HitResult.Type.BLOCK && hit.getBlockPos().equals(block);
+        return BlockInteraction.hit(mc,eyes,block,table!=null && block.equals(table.below()))!=null;
     }
 
     private static boolean approachWorkbench(Minecraft mc,BlockPos block,Vec3 point) {
-        if(clearInteraction(mc,mc.player.getEyePosition(),block,point)) return true;
+        if(clearInteraction(mc,mc.player.getEyePosition(),block,point)) {
+            workbenchStand=workbenchApproach=null;return true;
+        }
         lastLookTarget=null;
+        if(block.equals(workbenchApproach) && workbenchStand!=null && ticks-workbenchApproachSince<160) {
+            LockOnTravel.walk(mc,workbenchStand);
+            detail="Approaching selected workbench face";return false;
+        }
+        workbenchApproach=block.immutable();workbenchApproachSince=ticks;
         BlockPos stand=null;
         double best=Double.MAX_VALUE;
         for(BlockPos p:BlockPos.betweenClosed(table.offset(-2,-1,-2),table.offset(2,1,2))) {
@@ -570,6 +575,7 @@ final class LockOnBootstrap {
             if(distance<best) {best=distance;stand=p.immutable();}
         }
         if(stand!=null) {
+            workbenchStand=stand;
             LockOnTravel.walk(mc,stand);
             detail="Walking to a clear view of the workbench/floor";
         } else {
@@ -585,33 +591,35 @@ final class LockOnBootstrap {
     }
 
     private static void scoutForTree(Minecraft mc) {
-        if(scoutTarget!=null && ticks-scoutSince<180) {
-            if(!LockOnTravel.walk(mc,scoutTarget)) {
-                detail="Exploring loaded terrain for a natural tree";
+        if(scoutTarget!=null) {
+            if(LockOnTravel.walk(mc,scoutTarget)) scoutTarget=null;
+            else if(ticks-scoutSince<240) {
+                detail="Searching loaded trees within 32 chunks; walking straight "+scoutHeading;
                 return;
+            } else {
+                // Only turn after a blocked destination has had time to recover.
+                scoutHeading=scoutHeading.getClockWise();scoutTarget=null;
             }
         }
-        scoutTarget=null;
-        // Survey successive directions around home, avoiding unsafe terrain.
-        double angle=(scoutIndex%8)*Math.PI/4;
-        int radius=8+8*((scoutIndex/8)%6);
-        scoutIndex++;
-        int x=base.getX()+(int)Math.round(Math.cos(angle)*radius);
-        int z=base.getZ()+(int)Math.round(Math.sin(angle)*radius);
-        if(!mc.level.hasChunk(x>>4,z>>4)) {release(mc);return;}
-        for(int dy=4;dy>=-4;dy--) {
-            BlockPos p=new BlockPos(x,base.getY()+dy,z);
-            if(Navigator.passable(mc.level,p) && Navigator.passable(mc.level,p.above())
-                && mc.level.getBlockState(p.below()).isFaceSturdy(mc.level,p.below(),Direction.UP)) {
-                scoutTarget=p;
-                scoutSince=ticks;
-                LockOnTravel.walk(mc,p);
-                detail="Searching loaded terrain for wood";
-                return;
+        BlockPos from=mc.player.blockPosition();
+        if(scoutHeading==null) scoutHeading=facing;
+        for(int length:new int[]{12,8,4,2}) {
+            BlockPos ahead=from.relative(scoutHeading,length);
+            if(!mc.level.hasChunk(ahead.getX()>>4,ahead.getZ()>>4)) continue;
+            for(int dy=2;dy>=-3;dy--) {
+                BlockPos p=ahead.offset(0,dy,0);
+                if(Navigator.passable(mc.level,p) && Navigator.passable(mc.level,p.above())
+                    && mc.level.getBlockState(p.below()).isFaceSturdy(mc.level,p.below(),Direction.UP)) {
+                    scoutTarget=p;scoutSince=ticks;
+                    LockOnTravel.walk(mc,p);
+                    detail="Continuing straight tree search "+scoutHeading;
+                    return;
+                }
             }
         }
+        if(ticks%40==0) scoutHeading=scoutHeading.getClockWise();
         release(mc);
-        detail="No safe tree-search route here; trying another direction";
+        detail="Searching loaded chunks; finding a supported scouting step";
     }
 
     private static boolean hasTable(Minecraft mc){
@@ -849,7 +857,7 @@ final class LockOnBootstrap {
     private static int findSlot(AbstractContainerMenu menu,Item item,int start) {
         for(int i=start;i<menu.slots.size();i++){
             ItemStack s=menu.getSlot(i).getItem();
-            if(s.is(item)&&s.getCount()>0)return i;
+            if((item==null?s.is(ItemTags.PLANKS):s.is(item))&&s.getCount()>0)return i;
         }
         return -1;
     }
