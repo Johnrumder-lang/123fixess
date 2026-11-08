@@ -1,10 +1,18 @@
-# LockOn v3.6.0 — survival recovery and combat
+# LockOn v3.6.1 — survival recovery and combat
 
 Minecraft Java 26.3, Fabric Loader 0.20.1, Fabric API 0.165.2+26.3, Cloth Config 26.3.159, Java 25.
 
-Replace older LockOn JARs with `LockOn-26.3-v3.6.0.jar`. F7 starts/stops survival, F6 opens settings, and U prints diagnostics. Enable automatic repeat for successive mining trips. For PvP, G selects a player, R toggles combat, H toggles chase, B allows obstacle mining, and J enables optional jump criticals. Physical movement immediately gives control back to you and stops automation.
+Replace older LockOn JARs with `LockOn-26.3-v3.6.1.jar`. F7 starts/stops survival, F6 opens settings, and U prints diagnostics. Enable automatic repeat for successive mining trips. For PvP, G selects a player, R toggles combat, H toggles chase, B allows obstacle mining, and J enables optional jump criticals. Physical movement immediately gives control back to you and stops automation.
 
-## Changes in this release
+## Changes in v3.6.1
+
+- Tables, chests and furnaces are crafted only when missing from both the world and inventory. Placement waits for confirmation, retries at most three times, and retains supplies when placement fails. Nearby existing stations are reused; placement and opening walk to a clear view and face the actual block.
+- Base crafting waits for the result to reach inventory. Container work tracks the requested station, and full/rejected chest transfers end the storage pass. Autoplay does not operate another open menu.
+- Suffocation interrupts crafting and travel to mine a collision block intersecting the player, including when the eye starts inside the block. Unbreakable blocks and containers are excluded.
+- Swimming seeks a dry bank with headroom, holds jump to surface, and stops sprinting near shore. Return travel uses the same water-exit behavior.
+- Restart keeps the existing home and resets combat, digging, placement and movement timers. Interrupted inventory crafting can recover its ingredients. Held movement keys must be released before manual takeover is armed; toggle-sprint alone no longer cancels autoplay.
+
+## Features retained from v3.6.0
 
 - Combat and survival share input sampling, including forward movement, strafing, jumping and sprint requests. Normal hunger, item-use and collision restrictions still apply to sprinting. Both modes can swim and surface for air.
 - Mob defense keeps its target and equips a sword before checking attack readiness. It follows knockback with forward pressure, waits for weapon charge, and sends the normal attack, swing and punch sequence. Creepers, low health and three nearby visible monsters trigger escape.

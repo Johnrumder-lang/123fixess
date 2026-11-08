@@ -122,6 +122,16 @@ public class NavigationTest {
   check(Navigator.route(w,p,1.5,1,.5,false)==null,"combat chase keeps conservative fall limits");
   LockOnSurvival.active=true;w.put(1,0,0,"air");
   check(Navigator.route(w,p,1.5,1,.5,false)==null,"unsupported drops never become routes");
+  w=new ClientLevel();p.y=1;p.x=.5;p.z=.5;
+  for(int x=-6;x<=6;x++)for(int z=-6;z<=6;z++){w.put(x,0,z,"water");w.put(x,1,z,"water");}
+  w.put(2,1,0,"stone");
+  var shore=Navigator.shore(w,p,new BlockPos(5,2,0),java.util.Set.of());
+  check(new BlockPos(2,2,0).equals(shore),"find dry one-block bank above water");
+  check(Navigator.shore(w,p,new BlockPos(5,2,0),java.util.Set.of(shore))==null,"failed bank is excluded from next search");
+  w.put(2,3,0,"leaves");
+  check(Navigator.shore(w,p,new BlockPos(5,2,0),java.util.Set.of())==null,"bank with blocked headroom is not a landing");
+  w.put(2,3,0,"air");w.put(2,1,0,"lava");
+  check(Navigator.shore(w,p,new BlockPos(5,2,0),java.util.Set.of())==null,"lava bank cannot be an escape point");
   System.out.println("Navigation block-grid: "+checks+" behavioral checks passed");
  }
 }

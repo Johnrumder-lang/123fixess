@@ -39,6 +39,7 @@ import net.minecraft.util.Mth;
 public final class LockOnSurvival {
     private enum Phase { OFF, BOOTSTRAP, TUNNEL, RETURN, BASE, PAUSED, RECOVER }
     private static Phase phase = Phase.OFF;
+    private static Phase resumePhase=Phase.BOOTSTRAP;
     private static BlockPos base;
     private static ClientLevel world;
     private static Direction tunnelDirection = Direction.NORTH;
@@ -118,7 +119,13 @@ public final class LockOnSurvival {
         }
         LocalPlayer me = mc.player;
         if (mc.level == null || me == null || !me.isAlive() || me.isSpectator()) return;
+        boolean resuming=world==mc.level && base!=null;
         world = mc.level;
+        lastMobHit=mobAimSince=lastToolSwapTick=-1000;
+        mobTargetId=null;combatActive=false;
+        towerLastUse=-100; towerStarted=aimedSince=miningStarted=0;
+        pickupSince=0;pickupStanding=null;sawDrop=false;
+        inventoryBeforeDig=java.util.Map.of();
         deathPosition=null;
         deathPickupPoint=null;
         pendingDrops.clear();
@@ -126,12 +133,13 @@ public final class LockOnSurvival {
         retreatOrigin=null;
         safeTicks=0;
         LockOnFood.reset();
-        base = BlockPos.containing(me.getX(), me.getY() + 0.08, me.getZ());
-        tunnelDirection = Direction.fromYRot(me.getYRot());
-        if (tunnelDirection.getAxis().isVertical()) tunnelDirection = Direction.NORTH;
-        baseFacing = tunnelDirection;
-        steps = 0;
-        cycles = 0;
+        if(!resuming) {
+            base = BlockPos.containing(me.getX(), me.getY() + 0.08, me.getZ());
+            tunnelDirection = Direction.fromYRot(me.getYRot());
+            if (tunnelDirection.getAxis().isVertical()) tunnelDirection = Direction.NORTH;
+            baseFacing = tunnelDirection;
+            steps = cycles = 0;
+        }
         blocksMined = mobsAttacked = foodUsed = 0;
         ticks = 0;
         startTick = 0;
@@ -146,15 +154,18 @@ public final class LockOnSurvival {
         lastDistanceTick = 0;
         lastDistance = -1;
         lastWaypoint = null;
-        phase = Phase.BOOTSTRAP;
+        phase = resuming && steps>0?Phase.RETURN:
+            resuming && resumePhase==Phase.BASE?Phase.BASE:Phase.BOOTSTRAP;
         reason = "";
         LockOnBase.reset();
         LockOnBootstrap.reset(mc,base,baseFacing);
+        LockOnMovement.begin(mc);
         notice(me, "Autoplay ON at " + base.toShortString()
             + ": gathering wood and crafting first. F7 stops anytime.");
     }
 
     public static void stop(Minecraft mc, String message) {
+        if(phase!=Phase.OFF) resumePhase=phase;
         stopEating(mc);
         cancelDig(mc);
         release(mc);
@@ -265,6 +276,14 @@ public final class LockOnSurvival {
             me.sendOverlayMessage(Component.literal(
                 "[LockOn F7 ACTIVE #" + ticks + "] " + phase + ": " + operation));
         }
+        if(me.isInWall()) {
+            if(!LockOnTravel.recoveringSuffocation()) interruptWork(mc);
+            LockOnCombat.stopUse(mc);
+            LockOnTravel.escapeSuffocation(mc);
+            reason="Suffocating: breaking the block intersecting the player";
+            return;
+        }
+        LockOnTravel.finishSuffocation(mc);
         // The only screen this bot is allowed to automate is its OWN chest,
         // furnace or crafting-table session. Never interact with other GUIs.
         if (mc.gui.screen() != null && !managingContainer()) {
@@ -319,6 +338,7 @@ public final class LockOnSurvival {
             return;
         }
         if(pickupBlock!=null && collectMinedDrop(mc)) return;
+        if(LockOnBootstrap.recoverInventory(mc)) return;
         if(LockOnMovement.stuck()) {
             if((phase==Phase.TUNNEL || phase==Phase.RETURN) && escapeAttempts<3) {
                 cancelDig(mc);
@@ -876,6 +896,11 @@ public final class LockOnSurvival {
         }
         if(towerBlock!=null || escapeRequested || (me.onGround() && destination.getY()-me.getY()>1.45)) {
             towerOut(mc,me);
+            return;
+        }
+        if(me.isInWater()) {
+            LockOnTravel.walk(mc,destination);
+            reason="Swimming to shore before returning home";
             return;
         }
         double dx=destination.getX()+0.5-me.getX();

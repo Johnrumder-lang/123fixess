@@ -220,6 +220,7 @@ public final class LockOnClient implements ClientModInitializer {
         }
         while (toggleKey.consumeClick()) {
             enabled = !enabled;
+            if(enabled) LockOnMovement.begin(mc);
             if (!enabled) {
                 stopActions(mc);
                 resetAttackSchedule();

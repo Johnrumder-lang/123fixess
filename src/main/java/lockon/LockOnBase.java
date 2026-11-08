@@ -38,6 +38,9 @@ final class LockOnBase {
     private static BlockPos table, chest, furnace;
     private static int ticks, stageTicks, lastInput;
     private static boolean askedOpen;
+    private static BlockPos openedPosition, interactionTarget;
+    private static int openRequestedAt, interactionSince, storeSlot=-1, storeCount;
+    private static final StationPlan placement=new StationPlan();
     private static CraftJob craftJob;
     private static int stored, smelted, compacted, placed;
     private static int smeltTimeout;
@@ -56,6 +59,10 @@ final class LockOnBase {
         moveStage=0;
         table=chest=furnace=null;
         askedOpen=false;
+        openedPosition=interactionTarget=null;
+        openRequestedAt=interactionSince=0;
+        storeSlot=-1;
+        placement.reset();
         craftJob=null;
         stored=smelted=compacted=placed=0;
         smeltTimeout=0;
@@ -77,8 +84,14 @@ final class LockOnBase {
         + " smelted " + smelted + " compacted " + compacted; }
 
     static void stop(Minecraft mc) {
+        if(craftJob!=null && craftJob.inventory && (craftJob.progress>0 || craftJob.action>0))
+            LockOnBootstrap.requestInventoryCleanup(mc);
         if (mc.player != null && askedOpen) close(mc);
         askedOpen=false;
+        openedPosition=interactionTarget=null;
+        openRequestedAt=interactionSince=0;
+        storeSlot=-1;
+        placement.reset();
         craftJob=null;
     }
 
@@ -95,13 +108,12 @@ final class LockOnBase {
         if (stageTicks > 2400) advance(mc);
         // Keep utility stations in diagonal corners so none block the four
         // cardinal strip-mining lanes used by continuous survival mode.
-        if (table == null) table = LockOnBootstrap.workbenchPosition();
-        if (table == null) table = base.relative(direction.getOpposite(),2)
-            .relative(direction.getClockWise(),2);
-        if (chest == null) chest = base.relative(direction,2)
-            .relative(direction.getClockWise(),2);
-        if (furnace == null) furnace = base.relative(direction.getOpposite(),2)
-            .relative(direction.getCounterClockWise(),2);
+        if(table==null) {
+            BlockPos known=LockOnBootstrap.workbenchPosition();
+            table=isBlock(mc,known,Blocks.CRAFTING_TABLE)?known:findStation(mc,base,Blocks.CRAFTING_TABLE);
+        }
+        if(chest==null) chest=findStation(mc,base,Blocks.CHEST);
+        if(furnace==null) furnace=findStation(mc,base,Blocks.FURNACE);
         if (ticks - lastInput < 2) return false;
 
         switch (stage) {
@@ -109,8 +121,15 @@ final class LockOnBase {
                 if (isBlock(mc,table,Blocks.CRAFTING_TABLE)) {
                     placed++;advance(mc);return false;
                 }
-                if (place(mc,table,Items.CRAFTING_TABLE)) {
-                    advance(mc);return false;
+                StationPlan.Action action=placement.next(ticks,false,countInventory(mc.player,Items.CRAFTING_TABLE),craftJob!=null);
+                if(action==StationPlan.Action.FAILED || table==null) {
+                    status="No confirmed table placement; retaining supplies and skipping this station";
+                    missingMaterials=true;advance(mc);return false;
+                }
+                if(craftJob==null && action!=StationPlan.Action.CRAFT) {
+                    if(action==StationPlan.Action.PLACE) place(mc,table,Items.CRAFTING_TABLE);
+                    else status="Waiting for table placement confirmation";
+                    return false;
                 }
                 // Craft a workbench from 4 wooden planks via the 2x2 player grid.
                 Item plank = findPlank(mc.player,4);
@@ -130,8 +149,15 @@ final class LockOnBase {
                 if (isBlock(mc,chest,Blocks.CHEST)) {
                     placed++;advance(mc);return false;
                 }
-                if (place(mc,chest,Items.CHEST)) {
-                    advance(mc);return false;
+                StationPlan.Action action=placement.next(ticks,false,countInventory(mc.player,Items.CHEST),craftJob!=null);
+                if(action==StationPlan.Action.FAILED || chest==null) {
+                    status="No confirmed chest placement; retaining supplies and skipping this station";
+                    missingMaterials=true;advance(mc);return false;
+                }
+                if(craftJob==null && action!=StationPlan.Action.CRAFT) {
+                    if(action==StationPlan.Action.PLACE) place(mc,chest,Items.CHEST);
+                    else status="Waiting for chest placement confirmation";
+                    return false;
                 }
                 Item plank=findPlank(mc.player,8);
                 if((plank!=null || craftJob!=null) && isBlock(mc,table,Blocks.CRAFTING_TABLE)) {
@@ -171,8 +197,15 @@ final class LockOnBase {
                 if (isBlock(mc,furnace,Blocks.FURNACE)) {
                     placed++;advance(mc);return false;
                 }
-                if (place(mc,furnace,Items.FURNACE)) {
-                    advance(mc);return false;
+                StationPlan.Action action=placement.next(ticks,false,countInventory(mc.player,Items.FURNACE),craftJob!=null);
+                if(action==StationPlan.Action.FAILED || furnace==null) {
+                    status="No confirmed furnace placement; retaining supplies and skipping this station";
+                    missingMaterials=true;advance(mc);return false;
+                }
+                if(craftJob==null && action!=StationPlan.Action.CRAFT) {
+                    if(action==StationPlan.Action.PLACE) place(mc,furnace,Items.FURNACE);
+                    else status="Waiting for furnace placement confirmation";
+                    return false;
                 }
                 if((craftJob!=null || countInventory(mc.player,Items.COBBLESTONE)>=8)
                     && isBlock(mc,table,Blocks.CRAFTING_TABLE)) {
@@ -314,6 +347,11 @@ final class LockOnBase {
                 if(!open(mc,chest,ChestMenu.class))return false;
                 AbstractContainerMenu menu=mc.player.containerMenu;
                 if(!(menu instanceof ChestMenu))return false;
+                if(storeSlot>=0) {
+                    if(menu.getSlot(storeSlot).getItem().getCount()<storeCount) {stored++;storeSlot=-1;}
+                    else if(ticks-lastInput>=20) {status="Storage transfer rejected or chest full";advance(mc);return false;}
+                    else return false;
+                }
                 int from=menu.slots.size()-36;
                 java.util.Map<Item,Integer> reserves=new java.util.HashMap<>();
                 for(int i=from;i<menu.slots.size();i++){
@@ -326,8 +364,8 @@ final class LockOnBase {
                     }
                     // Only one shift-click every couple ticks. If chest is
                     // full the server refuses it, and this phase times out.
+                    storeSlot=i;storeCount=item.getCount();
                     input(mc,i,0,ContainerInput.QUICK_MOVE);
-                    stored++;
                     return false;
                 }
                 close(mc);
@@ -344,6 +382,9 @@ final class LockOnBase {
 
     private static void advance(Minecraft mc) {
         equipmentRecipe=null;
+        placement.reset();
+        interactionTarget=null;
+        storeSlot=-1;
         if (askedOpen)close(mc);
         craftJob=null;
         moveStage=0;
@@ -356,27 +397,85 @@ final class LockOnBase {
         return pos!=null && mc.level.getBlockState(pos).is(type);
     }
 
+    private static BlockPos findStation(Minecraft mc,BlockPos home,Block block) {
+        BlockPos site=null;
+        double best=Double.MAX_VALUE;
+        for(BlockPos p:BlockPos.betweenClosed(home.offset(-8,-3,-8),home.offset(8,3,8))) {
+            if(!mc.level.hasChunk(p.getX()>>4,p.getZ()>>4)) continue;
+            if(mc.level.getBlockState(p).is(block)) return p.immutable();
+            if(p.equals(table) || p.equals(chest) || p.equals(furnace)
+                || p.getX()==home.getX() || p.getZ()==home.getZ()
+                || !mc.level.getBlockState(p).canBeReplaced()
+                || !mc.level.getBlockState(p).getFluidState().isEmpty()
+                || !mc.level.getBlockState(p.below()).isFaceSturdy(mc.level,p.below(),Direction.UP)
+                || !mc.level.getBlockState(p.below()).getFluidState().isEmpty()
+                || mc.player.getBoundingBox().intersects(new net.minecraft.world.phys.AABB(p))) continue;
+            double score=p.distSqr(home);
+            if(score<best) {best=score;site=p.immutable();}
+        }
+        return site;
+    }
+
+    private static net.minecraft.world.phys.BlockHitResult visibleHit(Minecraft mc,Vec3 eye,BlockPos block,Vec3 point) {
+        if(eye.distanceTo(point)>4.1) return null;
+        var hit=mc.level.clip(new net.minecraft.world.level.ClipContext(eye,point,
+            net.minecraft.world.level.ClipContext.Block.COLLIDER,
+            net.minecraft.world.level.ClipContext.Fluid.NONE,mc.player));
+        return hit.getType()==net.minecraft.world.phys.HitResult.Type.BLOCK && hit.getBlockPos().equals(block)?hit:null;
+    }
+
+    private static BlockHitResult approach(Minecraft mc,BlockPos block,Vec3 point,BlockPos avoid) {
+        var hit=visibleHit(mc,mc.player.getEyePosition(),block,point);
+        if(hit==null || (avoid!=null && mc.player.getBoundingBox().intersects(new net.minecraft.world.phys.AABB(avoid)))) {
+            interactionTarget=null;
+            BlockPos stand=null;double best=Double.MAX_VALUE;
+            for(BlockPos p:BlockPos.betweenClosed(block.offset(-3,-1,-3),block.offset(3,2,3))) {
+                if(p.equals(avoid) || !Navigator.passable(mc.level,p) || !Navigator.passable(mc.level,p.above())
+                    || !mc.level.getBlockState(p.below()).isFaceSturdy(mc.level,p.below(),Direction.UP)) continue;
+                Vec3 eye=Vec3.atBottomCenterOf(p).add(0,mc.player.getEyeHeight(),0);
+                if(visibleHit(mc,eye,block,point)==null) continue;
+                double score=mc.player.distanceToSqr(Vec3.atBottomCenterOf(p));
+                if(score<best) {best=score;stand=p.immutable();}
+            }
+            if(stand!=null) LockOnTravel.walk(mc,stand);
+            else LockOnMovement.stop(mc);
+            status="Approaching a clear view of station/support";
+            return null;
+        }
+        LockOnMovement.stop(mc);
+        LockOnTravel.face(mc,hit.getLocation());
+        if(!block.equals(interactionTarget)) {interactionTarget=block.immutable();interactionSince=ticks;}
+        // Let camera rotation and held item synchronization reach the server.
+        if(ticks-interactionSince<4) return null;
+        Vec3 rayEnd=mc.player.getEyePosition().add(mc.player.getViewVector(1).scale(4.2));
+        var aimed=mc.level.clip(new net.minecraft.world.level.ClipContext(mc.player.getEyePosition(),rayEnd,
+            net.minecraft.world.level.ClipContext.Block.COLLIDER,net.minecraft.world.level.ClipContext.Fluid.NONE,mc.player));
+        if(aimed.getType()!=net.minecraft.world.phys.HitResult.Type.BLOCK || !aimed.getBlockPos().equals(block)) return null;
+        return hit;
+    }
+
     private static boolean place(Minecraft mc,BlockPos pos,Item item) {
         LocalPlayer me=mc.player;
-        if(pos==null || me.getEyePosition().distanceTo(Vec3.atCenterOf(pos))>4.3)
-            return false;
-        if(!mc.level.getBlockState(pos).isAir())return false;
-        BlockPos floor=pos.below();
-        if(mc.level.getBlockState(floor).isAir()
-            || !mc.level.getBlockState(floor).getFluidState().isEmpty())return false;
-        int slot=findHotbar(me,item);
-        if(slot<0) {
-            // Crafted outputs can arrive in the main inventory, not on
-            // the hotbar. A normal SWAP click moves them into a hotbar slot.
-            moveItemToHotbar(mc,item);
+        if(!(me.containerMenu instanceof InventoryMenu)) {
+            if(askedOpen) close(mc);
             return false;
         }
-        me.getInventory().setSelectedSlot(slot);
-        mc.gameMode.useItemOn(me,InteractionHand.MAIN_HAND,
-            new BlockHitResult(new Vec3(pos.getX()+0.5,pos.getY(),pos.getZ()+0.5),
-                Direction.UP,floor,false));
+        if(!mc.level.getBlockState(pos).canBeReplaced()) {
+            status="Station space occupied; skipping placement";advance(mc);return false;
+        }
+        int slot=findHotbar(me,item);
+        if(slot<0) {moveItemToHotbar(mc,item);return false;}
+        if(me.getInventory().getSelectedSlot()!=slot) {
+            me.getInventory().setSelectedSlot(slot);interactionTarget=null;return false;
+        }
+        Vec3 point=new Vec3(pos.getX()+0.5,pos.getY()-0.01,pos.getZ()+0.5);
+        BlockHitResult hit=approach(mc,pos.below(),point,pos);
+        if(hit==null) return false;
+        mc.gameMode.useItemOn(me,InteractionHand.MAIN_HAND,hit);
+        placement.sent(ticks);
         lastInput=ticks;
-        return isBlock(mc,pos,Block.byItem(item));
+        status="Placement sent; waiting for world confirmation";
+        return false;
     }
 
     private static void moveItemToHotbar(Minecraft mc,Item item) {
@@ -445,37 +544,30 @@ final class LockOnBase {
     }
 
     private static boolean open(Minecraft mc,BlockPos pos,Class<?> type) {
-        if(type.isInstance(mc.player.containerMenu)) return true;
-        if(askedOpen){
-            if(ticks-lastInput<30)return false;
-            // Server did not open the expected menu. Don't interact with
-            // some other window, and move to the next station.
-            if(mc.player.containerMenu instanceof InventoryMenu){
-                askedOpen=false;
-                if(++openAttempts>=3)advance(mc);
-            } else {
-                close(mc);
-                if(++openAttempts>=3)advance(mc);
-            }
+        if(askedOpen) {
+            if(pos.equals(openedPosition) && type.isInstance(mc.player.containerMenu)) return true;
+            if(ticks-openRequestedAt<40) return false;
+            close(mc);
+            if(++openAttempts>=3) {status="Station did not open; skipping after three attempts";advance(mc);}
             return false;
         }
-        if(mc.player.getEyePosition().distanceTo(Vec3.atCenterOf(pos))>4.3){
-            advance(mc);return false;
-        }
-        mc.gameMode.useItemOn(mc.player,InteractionHand.MAIN_HAND,
-            new BlockHitResult(Vec3.atCenterOf(pos),Direction.UP,pos,false));
+        if(!(mc.player.containerMenu instanceof InventoryMenu)) return false;
+        BlockHitResult hit=approach(mc,pos,Vec3.atCenterOf(pos),null);
+        if(hit==null) return false;
+        mc.gameMode.useItemOn(mc.player,InteractionHand.MAIN_HAND,hit);
         askedOpen=true;
-        lastInput=ticks;
+        openedPosition=pos.immutable();
+        openRequestedAt=lastInput=ticks;
         return false;
     }
 
     private static void close(Minecraft mc) {
-        if(mc.player==null)return;
-        if(!(mc.player.containerMenu instanceof InventoryMenu)){
-            mc.player.closeContainer();
-        }
+        if(mc.player==null || !askedOpen)return;
+        if(!(mc.player.containerMenu instanceof InventoryMenu)) mc.player.closeContainer();
         if(mc.gui.screen()!=null)mc.gui.setScreen(null);
         askedOpen=false;
+        openedPosition=null;
+        interactionTarget=null;
         lastInput=ticks;
     }
 
@@ -594,7 +686,8 @@ final class LockOnBase {
     private static final class CraftJob {
         final java.util.List<Ingredient> ingredients;
         final boolean inventory;
-        int progress, action, source=-1, outputWait;
+        int progress, action, source=-1, outputWait, resultClicked=-1, resultBefore;
+        Item resultItem;
         CraftJob(java.util.List<Ingredient> ingredients,boolean inventory){
             this.ingredients=ingredients;
             this.inventory=inventory;
@@ -628,6 +721,13 @@ final class LockOnBase {
             craftJob=new CraftJob(java.util.List.copyOf(ingredients),portable);
         }
         CraftJob job=craftJob;
+        if(job.resultClicked>=0) {
+            if(countInventory(mc.player,job.resultItem)>job.resultBefore && menu.getCarried().isEmpty()) {
+                craftJob=null;return true;
+            }
+            if(ticks-job.resultClicked>60) {status="Crafted output not confirmed; skipping stage";advance(mc);}
+            return false;
+        }
         if(job.progress<job.ingredients.size()){
             Ingredient ing=job.ingredients.get(job.progress);
             if(job.action==0){
@@ -657,9 +757,11 @@ final class LockOnBase {
             }
             return false;
         }
+        job.resultItem=menu.getSlot(0).getItem().getItem();
+        job.resultBefore=countInventory(mc.player,job.resultItem);
+        job.resultClicked=ticks;
         input(mc,0,0,ContainerInput.QUICK_MOVE);
-        craftJob=null;
-        return true;
+        return false;
     }
 
     private static void message(Minecraft mc,String s){

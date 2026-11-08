@@ -58,6 +58,10 @@ final class LockOnBootstrap {
     private static int cleaningTicks;
     private static final int SEARCH_RADIUS = 32;
     private static BlockPos scoutTarget;
+    private static LocalPlayer cleanupOwner;
+    private static final StationPlan tablePlacement=new StationPlan();
+
+    static void requestInventoryCleanup(Minecraft mc) { cleanupOwner=mc.player; }
     private static int scoutIndex, scoutSince;
     private static final java.util.Set<BlockPos> rejectedSites=new java.util.HashSet<>();
 
@@ -87,6 +91,7 @@ final class LockOnBootstrap {
         table=base.relative(direction.getOpposite(),2)
             .relative(direction.getClockWise(),2);
         rejectedSites.clear();
+        tablePlacement.reset();
         table=findWorkbenchSite(mc);
         scoutTarget=null;
         scoutIndex=0;
@@ -108,6 +113,9 @@ final class LockOnBootstrap {
         logsMined=recipes=woodSearches=0;
         lastWoodSearchAt=-1000;
         blockedTrees.clear();
+        cleaningRecipe=cleanupOwner==mc.player;
+        cleanupOwner=null;
+        cleaningTicks=0;
         detail="Locating wood";
         step=Step.WOOD;
     }
@@ -117,11 +125,18 @@ final class LockOnBootstrap {
             +(detail.isBlank() ? "" : " — "+detail);
     }
 
+    static boolean recoverInventory(Minecraft mc) {
+        if(!cleaningRecipe) return false;
+        ticks++;cleanupCraftingGrid(mc);return true;
+    }
+
     static boolean busyCrafting() { return recipe!=null || cleaningRecipe; }
 
     static boolean managingContainer() { return openedTable; }
 
     static void stop(Minecraft mc) {
+        if(recipe!=null && !recipe.table && (recipe.placedOwnIngredients || recipe.action>0))
+            requestInventoryCleanup(mc);
         if(mc!=null && mc.gameMode!=null && digTarget!=null)
             mc.gameMode.stopDestroyBlock();
         if(mc!=null && mc.player!=null && openedTable
@@ -196,6 +211,15 @@ final class LockOnBootstrap {
             }
         }
 
+        if(tablePlacement.attempted() && !hasTable(mc)) {
+            StationPlan.Action pending=tablePlacement.next(ticks,false,count(player,Items.CRAFTING_TABLE),false);
+            if(pending==StationPlan.Action.WAIT || pending==StationPlan.Action.FAILED) {
+                release(mc);
+                detail=pending==StationPlan.Action.WAIT?"Waiting for workbench placement confirmation":
+                    "Workbench placement failed; retaining resources until restart";
+                return false;
+            }
+        }
         // Every phase transition uses a deterministic plan. A fresh player
         // with no wood cannot immediately claim "mining finished".
         AutoplayPlan.Action action = AutoplayPlan.next(
@@ -444,6 +468,7 @@ final class LockOnBootstrap {
             return;
         }
         mc.gameMode.useItemOn(player,InteractionHand.MAIN_HAND,supportHit);
+        tablePlacement.sent(ticks);
         stationAttempts++;
         lastStationUseTick=ticks;
         detail="Placing crafting table (attempt "+stationAttempts+")";
@@ -681,7 +706,7 @@ final class LockOnBootstrap {
 
     private static void cleanupCraftingGrid(Minecraft mc) {
         if(ticks-lastClick<3) return;
-        if(ticks-cleaningTicks>00) {
+        if(ticks-cleaningTicks>200) {
             cleaningRecipe=false;
             step=Step.WAIT;
             detail="Craft grid could not be recovered; clear it manually";

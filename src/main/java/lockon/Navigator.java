@@ -194,6 +194,24 @@ final class Navigator {
         return supports(level, feet.below()) && passable(level, feet.above(2));
     }
 
+    static BlockPos shore(ClientLevel level,LocalPlayer player,BlockPos goal,java.util.Set<BlockPos> rejected) {
+        BlockPos from=BlockPos.containing(player.getX(),player.getY(),player.getZ());
+        BlockPos best=null;double bestScore=Double.MAX_VALUE;
+        for(int dx=-6;dx<=6;dx++) for(int dz=-6;dz<=6;dz++) for(int dy=-1;dy<=2;dy++) {
+            BlockPos p=from.offset(dx,dy,dz);
+            if(rejected.contains(p) || !level.hasChunk(p.getX()>>4,p.getZ()>>4)
+                || !passable(level,p) || !passable(level,p.above())
+                || !level.getBlockState(p).getFluidState().isEmpty()
+                || !level.getBlockState(p.above()).getFluidState().isEmpty()
+                || !level.getBlockState(p.below()).getFluidState().isEmpty()
+                || !supports(level,p.below())) continue;
+            double toGoal=Math.hypot(p.getX()-goal.getX(),p.getZ()-goal.getZ());
+            double score=Math.hypot(dx,dz)+Math.max(0,dy)*2+toGoal*0.25;
+            if(score<bestScore) {bestScore=score;best=p;}
+        }
+        return best;
+    }
+
     static boolean passable(ClientLevel level, BlockPos pos) {
         BlockState state = level.getBlockState(pos);
         return (state.getFluidState().isEmpty() || state.getFluidState().is(net.minecraft.tags.FluidTags.WATER))

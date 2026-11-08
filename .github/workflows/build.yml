@@ -26,6 +26,13 @@ jobs:
         run: python3 tools/test_combat_actions.py
       - name: Test pathfinding on controlled terrain grids
         run: python3 tools/test_navigation.py
+      - name: Test collision-driven suffocation escape
+        run: python3 tools/test_suffocation.py
+      - name: Test station placement confirmation and retry limits
+        run: |
+          mkdir -p build/station-tests
+          javac --release 25 -d build/station-tests src/main/java/lockon/StationPlan.java src/test/java/lockon/StationPlanTest.java
+          java -cp build/station-tests lockon.StationPlanTest
       - name: Test combat tactics (deterministic rules, no Minecraft client)
         run: |
           mkdir -p build/combat-tactics-tests
@@ -58,20 +65,20 @@ jobs:
         run: gradle --no-daemon -p server-paper build --stacktrace
       - name: Publish versioned JAR after successful build
         run: |
-          test -s build/libs/lockon-3.6.0.jar
-          test -s server-paper/build/libs/lockon-paper-3.6.0.jar
-          cp build/libs/lockon-3.6.0.jar LockOn-26.3-v3.6.0.jar
-          cp server-paper/build/libs/lockon-paper-3.6.0.jar LockOn-Server-Paper-26.3-v3.6.0.jar
+          test -s build/libs/lockon-3.6.1.jar
+          test -s server-paper/build/libs/lockon-paper-3.6.1.jar
+          cp build/libs/lockon-3.6.1.jar LockOn-26.3-v3.6.1.jar
+          cp server-paper/build/libs/lockon-paper-3.6.1.jar LockOn-Server-Paper-26.3-v3.6.1.jar
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add -f LockOn-26.3-v3.6.0.jar LockOn-Server-Paper-26.3-v3.6.0.jar
+          git add -f LockOn-26.3-v3.6.1.jar LockOn-Server-Paper-26.3-v3.6.1.jar
           if ! git diff --cached --quiet; then
-            git commit -m 'Publish LockOn-26.3-v3.6.0.jar [skip ci]'
+            git commit -m 'Publish LockOn-26.3-v3.6.1.jar [skip ci]'
             git push
           fi
       - uses: actions/upload-artifact@v4
         with:
-          name: LockOn-26.3-v3.6.0
+          name: LockOn-26.3-v3.6.1
           path: |
-            LockOn-26.3-v3.6.0.jar
-            LockOn-Server-Paper-26.3-v3.6.0.jar
+            LockOn-26.3-v3.6.1.jar
+            LockOn-Server-Paper-26.3-v3.6.1.jar

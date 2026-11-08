@@ -89,7 +89,7 @@ public class MovementInputTest {
         check(!bot.backward() && !bot.left() && !bot.right(),"no phantom directions");
         LockOnMovement.beforeClientTick(mc);
         check(LockOnMovement.sample(Input.EMPTY).forward(),"intent survives tick boundary");
-        for(int key=0;key<7;key++) {
+        for(int key=0;key<6;key++) {
             LockOnSurvival.active=true;
             LockOnMovement.forward(mc,true);
             Input manual=new Input(key==0,key==1,key==2,key==3,key==4,key==5,key==6);
@@ -134,6 +134,19 @@ public class MovementInputTest {
         check(LockOnMovement.sample(manual)==manual,"PvP respects manual backward input");
         check(!LockOnClient.active,"manual input disables combat");
         check(LockOnMovement.sample(Input.EMPTY)==Input.EMPTY,"no stale PvP controls");
+        LockOnSurvival.active=true;
+        LockOnMovement.begin(mc);
+        Input held=new Input(true,false,false,false,false,false,false);
+        check(LockOnMovement.sample(held)==held,"held forward preserved during restart");
+        check(LockOnSurvival.active,"held forward does not immediately cancel activation");
+        LockOnMovement.sample(Input.EMPTY);
+        LockOnMovement.forward(mc,true);
+        check(LockOnMovement.sample(Input.EMPTY).forward(),"bot takes over after physical key release");
+        Input latchedSprint=new Input(false,false,false,false,false,false,true);
+        check(LockOnMovement.sample(latchedSprint).forward(),"latched sprint keeps bot movement");
+        check(LockOnSurvival.active,"toggle sprint alone never cancels autoplay");
+        check(LockOnMovement.sample(held)==held,"fresh forward press immediately returns manual control");
+        check(!LockOnSurvival.active,"fresh movement press stops bot after arming");
         System.out.println("Survival input: "+passed+" behavioral checks passed");
     }
 }

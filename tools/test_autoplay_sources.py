@@ -131,4 +131,17 @@ assert "LockOnMovement.combat(mc,f,b,l,r,sprint" in client
 assert "mc.options.keySprint.setDown" not in client
 print("Death recovery, harvest tier, pickup, combat and unified movement wiring: pass")
 
-assert "public static void stop(Minecraft mc, String message) {\n        stopEating(mc);" in survival
+assert "stopEating(mc);" in survival.split("public static void stop(Minecraft mc, String message)")[1].split("static boolean recoveringDeath")[0]
+
+assert "StationPlan.Action.CRAFT" in base
+assert "placement.next(ticks,false,countInventory" in base
+assert "job.resultClicked=ticks" in base
+assert "countInventory(mc.player,job.resultItem)>job.resultBefore" in base
+assert "pos.equals(openedPosition) && type.isInstance" in base
+assert "ticks-lastInput>=20" in base
+assert survival.index("if(me.isInWall())") < survival.index("if (me.getAirSupply() < 75)")
+assert "LockOnTravel.escapeSuffocation(mc)" in survival
+assert "lastMobHit=mobAimSince=lastToolSwapTick=-1000" in survival
+assert "boolean resuming=world==mc.level && base!=null" in survival
+assert "ticks-cleaningTicks>200" in bootstrap
+print("Station confirmation, menu ownership, restart and suffocation integration: pass")

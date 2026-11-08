@@ -14,6 +14,9 @@ public final class LockOnMovement {
     private static Vec3 lastPosition;
     private static double recentDelta;
     private static boolean applied;
+    private static boolean manualArmed=true;
+
+    static void begin(Minecraft mc) { stop(mc);manualArmed=false; }
 
     private LockOnMovement() {}
 
@@ -54,8 +57,15 @@ public final class LockOnMovement {
             return manual;
         }
         inputSamples++;
-        if(manual.forward() || manual.backward() || manual.left() || manual.right()
-            || manual.jump() || manual.shift() || manual.sprint()) {
+        boolean manualMovement=manual.forward() || manual.backward() || manual.left() || manual.right()
+            || manual.jump() || manual.shift();
+        // A key held while toggling must be released before takeover is armed.
+        // Toggle-sprint is latched by vanilla; sprint alone is not manual movement.
+        if(!manualArmed) {
+            if(manualMovement) return manual;
+            manualArmed=true;
+        }
+        if(manualMovement) {
             // The original vanilla input is returned in this SAME player tick.
             // Never write KeyMapping states: they belong to physical keyboard events.
             if(LockOnSurvival.enabled()) LockOnSurvival.stop(mc,"Manual movement: autoplay stopped. F7 restarts it.");
@@ -65,7 +75,7 @@ public final class LockOnMovement {
         }
         applied=forward || backward || left || right || jump || sprint;
         if(!applied) return manual;
-        return new Input(forward,backward,left,right,jump,false,sprint);
+        return new Input(forward,backward,left,right,jump,false,sprint || manual.sprint());
     }
 
     static void beforeClientTick(Minecraft mc) {

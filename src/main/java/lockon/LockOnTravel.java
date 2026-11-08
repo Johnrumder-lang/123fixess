@@ -12,7 +12,10 @@ import net.minecraft.world.phys.Vec3;
 /** Shared walking and reachable gate interactions for gathering and recovery. */
 final class LockOnTravel {
     private static long gateUseTick = -100;
-    private static BlockPos goal, waypoint, breaking;
+    private static BlockPos goal, waypoint, breaking, shore, suffocationBlock;
+    private static long shoreSince, suffocationSince;
+    private static boolean suffocationStarted;
+    private static final java.util.Set<BlockPos> rejectedShores=new java.util.HashSet<>();
     private static Vec3 lastPosition;
     private static int stagnant;
     private static long startedBreaking;
@@ -20,7 +23,10 @@ final class LockOnTravel {
 
     static void reset(Minecraft mc) {
         if(mc.gameMode!=null && breaking!=null) mc.gameMode.stopDestroyBlock();
-        goal=waypoint=breaking=null;
+        finishSuffocation(mc);
+        goal=waypoint=breaking=shore=null;
+        rejectedShores.clear();
+        gateUseTick=-100;
         lastPosition=null;
         stagnant=0;
         LockOnMovement.stop(mc);
@@ -68,11 +74,10 @@ final class LockOnTravel {
             return true;
         }
         if(mc.player.isInWater()) {
-            face(mc,new Vec3(target.getX()+0.5,mc.player.getEyeY(),target.getZ()+0.5));
-            LockOnMovement.forward(mc,mc.player.getFoodData().getFoodLevel()>6);
-            LockOnMovement.jump(mc,mc.player.getAirSupply()<200 || target.getY()>=mc.player.getY());
+            swimToShore(mc,target);
             return false;
         }
+        shore=null;rejectedShores.clear();
         if(openGate(mc)) {LockOnMovement.stop(mc);return false;}
         if(waypoint!=null && mc.player.onGround()
             && Math.hypot(waypoint.getX()+0.5-now.x,waypoint.getZ()+0.5-now.z)<0.38
@@ -110,6 +115,76 @@ final class LockOnTravel {
             && mc.player.getHealth()>8 && Math.hypot(dx,dz)>3);
         LockOnMovement.jump(mc,jumping);
         return false;
+    }
+
+    private static void swimToShore(Minecraft mc,BlockPos target) {
+        long now=mc.level.getGameTime();
+        if(shore!=null && (now-shoreSince>180 || !Navigator.passable(mc.level,shore)
+            || !Navigator.passable(mc.level,shore.above()))) {
+            rejectedShores.add(shore);shore=null;
+        }
+        if(shore==null) {shore=Navigator.shore(mc.level,mc.player,target,rejectedShores);shoreSince=now;}
+        BlockPos destination=shore==null?target:shore;
+        double distance=Math.hypot(destination.getX()+0.5-mc.player.getX(),destination.getZ()+0.5-mc.player.getZ());
+        // Looking upward, holding jump and releasing sprint near a bank lets
+        // vanilla leave its swimming pose and climb a normal one-block shore.
+        face(mc,new Vec3(destination.getX()+0.5,Math.max(mc.player.getEyeY()+0.8,destination.getY()+1.2),destination.getZ()+0.5));
+        boolean climbing=shore!=null && distance<3;
+        if(climbing) mc.player.setSprinting(false);
+        LockOnMovement.forward(mc,!climbing && mc.player.getFoodData().getFoodLevel()>6);
+        LockOnMovement.jump(mc,true);
+    }
+
+    static boolean recoveringSuffocation() { return suffocationBlock!=null; }
+
+    static void finishSuffocation(Minecraft mc) {
+        if(suffocationBlock!=null && mc.gameMode!=null) mc.gameMode.stopDestroyBlock();
+        suffocationBlock=null;suffocationStarted=false;
+    }
+
+    static void escapeSuffocation(Minecraft mc) {
+        LockOnMovement.stop(mc);
+        var me=mc.player;
+        var body=me.getBoundingBox().deflate(0.01);
+        BlockPos chosen=null;
+        // Prefer the block around the eyes, then other intersecting body blocks.
+        double best=Double.MAX_VALUE;
+        for(BlockPos p:BlockPos.betweenClosed(BlockPos.containing(body.minX,body.minY,body.minZ),
+            BlockPos.containing(body.maxX,body.maxY,body.maxZ))) {
+            var state=mc.level.getBlockState(p);
+            if(state.hasBlockEntity() || !state.getFluidState().isEmpty()
+                || state.getDestroySpeed(mc.level,p)<0) continue;
+            boolean intersects=false;
+            for(var box:state.getCollisionShape(mc.level,p).toAabbs())
+                if(box.move(p.getX(),p.getY(),p.getZ()).intersects(body)) {intersects=true;break;}
+            if(!intersects) continue;
+            double distance=me.getEyePosition().distanceToSqr(Vec3.atCenterOf(p));
+            if(distance<best) {best=distance;chosen=p.immutable();}
+        }
+        if(chosen==null) {finishSuffocation(mc);return;}
+        if(!chosen.equals(suffocationBlock)) {
+            finishSuffocation(mc);suffocationBlock=chosen;suffocationSince=mc.level.getGameTime();
+        }
+        int slot=me.getInventory().getSelectedSlot();float speed=me.getMainHandItem().getDestroySpeed(mc.level.getBlockState(chosen));
+        for(int i=0;i<36;i++) {
+            float candidate=me.getInventory().getItem(i).getDestroySpeed(mc.level.getBlockState(chosen));
+            if(candidate>speed) {speed=candidate;slot=i;}
+        }
+        if(slot>=9) {
+            if(me.containerMenu instanceof net.minecraft.world.inventory.InventoryMenu)
+                mc.gameMode.handleContainerInput(me.containerMenu.containerId,slot,8,
+                    net.minecraft.world.inventory.ContainerInput.SWAP,me);
+            return;
+        }
+        me.getInventory().setSelectedSlot(slot);
+        face(mc,Vec3.atCenterOf(chosen));
+        if(mc.level.getGameTime()-suffocationSince<2) return;
+        // A ray starting inside a solid block can miss its surface. Use the
+        // actual intersecting block with ordinary survival breaking packets.
+        if(!suffocationStarted) {
+            mc.gameMode.startDestroyBlock(chosen,net.minecraft.core.Direction.UP);
+            suffocationStarted=true;
+        } else mc.gameMode.continueDestroyBlock(chosen,net.minecraft.core.Direction.UP);
     }
 
     static BlockPos standingPosition(Minecraft mc,BlockPos column) {
